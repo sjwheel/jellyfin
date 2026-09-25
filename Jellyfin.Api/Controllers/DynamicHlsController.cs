@@ -1951,6 +1951,17 @@ public class DynamicHlsController : BaseJellyfinApiController
         TranscodingJob? transcodingJob,
         CancellationToken cancellationToken)
     {
+        bool isInitSegment = segmentPath.EndsWith("-1.mp4", StringComparison.OrdinalIgnoreCase) || segmentIndex == -1;
+        if (isInitSegment && System.IO.File.Exists(segmentPath))
+        {
+            var fileInfo = new System.IO.FileInfo(segmentPath);
+            if (fileInfo.Length > 0)
+            {
+                _logger.LogDebug("Serving up init segment {SegmentPath} immediately", segmentPath);
+                return GetSegmentResult(state, segmentPath, transcodingJob);
+            }
+        }
+
         var segmentExists = System.IO.File.Exists(segmentPath);
         if (segmentExists)
         {
@@ -1976,6 +1987,23 @@ public class DynamicHlsController : BaseJellyfinApiController
         {
             while (!cancellationToken.IsCancellationRequested && !transcodingJob.HasExited)
             {
+                if (isInitSegment && System.IO.File.Exists(segmentPath))
+                {
+                    var fileInfo = new System.IO.FileInfo(segmentPath);
+                    if (fileInfo.Length > 0)
+                    {
+                        _logger.LogDebug("Serving up init segment {SegmentPath} as it is ready on disk", segmentPath);
+                        return GetSegmentResult(state, segmentPath, transcodingJob);
+                    }
+                }
+
+                var currentIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
+                if (currentIndex.HasValue && segmentIndex < currentIndex.Value)
+                {
+                    _logger.LogDebug("Serving up {SegmentPath} as transcode index {CurrentIndex} passed requested {SegmentIndex}", segmentPath, currentIndex.Value, segmentIndex);
+                    return GetSegmentResult(state, segmentPath, transcodingJob);
+                }
+
                 // To be considered ready, the segment file has to exist AND
                 // either the transcoding job should be done or next segment should also exist
                 if (segmentExists)
