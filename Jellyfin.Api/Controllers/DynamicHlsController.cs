@@ -1481,42 +1481,49 @@ public class DynamicHlsController : BaseJellyfinApiController
         if (System.IO.File.Exists(segmentPath))
         {
             job = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
-            _logger.LogDebug("returning {0} [it exists, try 1]", segmentPath);
-            return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("returning {0} [it exists, try 1]", segmentPath);
+            return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, HttpContext.RequestAborted).ConfigureAwait(false);
         }
 
-        using (await _transcodeManager.LockAsync(playlistPath, cancellationToken).ConfigureAwait(false))
+        using (await _transcodeManager.LockAsync(playlistPath, HttpContext.RequestAborted).ConfigureAwait(false))
         {
             var startTranscoding = false;
             if (System.IO.File.Exists(segmentPath))
             {
                 job = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
-                _logger.LogDebug("returning {0} [it exists, try 2]", segmentPath);
-                return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("returning {0} [it exists, try 2]", segmentPath);
+                return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, HttpContext.RequestAborted).ConfigureAwait(false);
             }
 
+            var currentJob = _transcodeManager.GetTranscodingJob(playlistPath, TranscodingJobType);
             var currentTranscodingIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
             var segmentGapRequiringTranscodingChange = 24 / state.SegmentLength;
 
             if (segmentId == -1)
             {
-                _logger.LogDebug("Starting transcoding because fmp4 init file is being requested");
-                startTranscoding = true;
-                segmentId = 0;
+                if (currentJob is null || currentJob.HasExited)
+                {
+                    _logger.LogInformation("Starting transcoding because fmp4 init file is being requested and no active job exists");
+                    startTranscoding = true;
+                }
+                else
+                {
+                    _logger.LogInformation("fmp4 init file requested while transcoding job {JobId} is already running", currentJob.Id);
+                }
             }
             else if (currentTranscodingIndex is null)
             {
-                _logger.LogDebug("Starting transcoding because currentTranscodingIndex=null");
+                _logger.LogInformation("Starting transcoding because currentTranscodingIndex=null, requestedIndex={0}", segmentId);
                 startTranscoding = true;
             }
             else if (segmentId < currentTranscodingIndex.Value)
             {
-                _logger.LogDebug("Starting transcoding because requestedIndex={0} and currentTranscodingIndex={1}", segmentId, currentTranscodingIndex);
+                _logger.LogInformation("Starting transcoding because requestedIndex={0} and currentTranscodingIndex={1}", segmentId, currentTranscodingIndex);
                 startTranscoding = true;
             }
             else if (segmentId - currentTranscodingIndex.Value > segmentGapRequiringTranscodingChange)
             {
-                _logger.LogDebug("Starting transcoding because segmentGap is {0} and max allowed gap is {1}. requestedIndex={2}", segmentId - currentTranscodingIndex.Value, segmentGapRequiringTranscodingChange, segmentId);
+                _logger.LogInformation("Starting transcoding because segmentGap is {0} and max allowed gap is {1}. requestedIndex={2}", segmentId - currentTranscodingIndex.Value, segmentGapRequiringTranscodingChange, segmentId);
                 startTranscoding = true;
             }
 
@@ -1535,14 +1542,15 @@ public class DynamicHlsController : BaseJellyfinApiController
 
                     streamingRequest.StartTimeTicks = streamingRequest.CurrentRuntimeTicks;
 
+                    var jobCancellationTokenSource = new CancellationTokenSource();
                     state.WaitForPath = segmentPath;
                     job = await _transcodeManager.StartFfMpeg(
                         state,
                         playlistPath,
-                        GetCommandLineArguments(playlistPath, state, false, segmentId),
+                        GetCommandLineArguments(playlistPath, state, false, segmentId == -1 ? 0 : segmentId),
                         Request.HttpContext.User.GetUserId(),
                         TranscodingJobType,
-                        cancellationTokenSource).ConfigureAwait(false);
+                        jobCancellationTokenSource).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -1562,9 +1570,9 @@ public class DynamicHlsController : BaseJellyfinApiController
             }
         }
 
-        _logger.LogDebug("returning {0} [general case]", segmentPath);
+        _logger.LogInformation("returning {0} [general case]", segmentPath);
         job ??= _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
-        return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, cancellationToken).ConfigureAwait(false);
+        return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, HttpContext.RequestAborted).ConfigureAwait(false);
     }
 
     private static double[] GetSegmentLengths(StreamState state)
@@ -1952,23 +1960,63 @@ public class DynamicHlsController : BaseJellyfinApiController
         CancellationToken cancellationToken)
     {
         bool isInitSegment = segmentPath.EndsWith("-1.mp4", StringComparison.OrdinalIgnoreCase) || segmentIndex == -1;
-        if (isInitSegment && System.IO.File.Exists(segmentPath))
+        if (isInitSegment)
         {
-            var fileInfo = new System.IO.FileInfo(segmentPath);
-            if (fileInfo.Length > 0)
+            // The fMP4 init segment (-1.mp4) contains stream initialization headers (ftyp/moov).
+            // Any FFmpeg transcode job writing to this stream will produce -1.mp4, and its content is identical.
+            // Decouple init segment waiting from any specific transcoding job's lifecycle so that job restarts
+            // (e.g. from seek requests) do not abort the init segment delivery.
+            try
             {
-                _logger.LogDebug("Serving up init segment {SegmentPath} immediately", segmentPath);
-                return GetSegmentResult(state, segmentPath, transcodingJob);
+                for (var i = 0; i < 150 && !cancellationToken.IsCancellationRequested; i++)
+                {
+                    if (System.IO.File.Exists(segmentPath))
+                    {
+                        try
+                        {
+                            var fileInfo = new System.IO.FileInfo(segmentPath);
+                            if (fileInfo.Length > 0)
+                            {
+                                _logger.LogInformation("Serving fMP4 init segment {SegmentPath} (attempt {Attempt}, size {Length} bytes)", segmentPath, i, fileInfo.Length);
+                                return GetSegmentResult(state, segmentPath, transcodingJob);
+                            }
+                        }
+                        catch (IOException)
+                        {
+                            // File may be briefly locked while FFmpeg flushes moov header; retry
+                        }
+                    }
+
+                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                }
             }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Client aborted request while waiting for init segment {SegmentPath}", segmentPath);
+                return new EmptyResult();
+            }
+
+            if (System.IO.File.Exists(segmentPath))
+            {
+                var fileInfo = new System.IO.FileInfo(segmentPath);
+                if (fileInfo.Length > 0)
+                {
+                    _logger.LogInformation("Serving fMP4 init segment {SegmentPath} after wait loop (size {Length} bytes)", segmentPath, fileInfo.Length);
+                    return GetSegmentResult(state, segmentPath, transcodingJob);
+                }
+            }
+
+            _logger.LogWarning("Timed out waiting for fMP4 init segment {SegmentPath}", segmentPath);
+            return NotFound();
         }
 
         var segmentExists = System.IO.File.Exists(segmentPath);
         if (segmentExists)
         {
-            if (transcodingJob is not null && transcodingJob.HasExited)
+            if (transcodingJob is null || transcodingJob.HasExited)
             {
-                // Transcoding job is over, so assume all existing files are ready
-                _logger.LogDebug("serving up {0} as transcode is over", segmentPath);
+                // Transcoding job is over (or not running), so assume all existing files are ready
+                _logger.LogInformation("serving up {0} as transcode is over or job is null", segmentPath);
                 return GetSegmentResult(state, segmentPath, transcodingJob);
             }
 
@@ -1977,7 +2025,7 @@ public class DynamicHlsController : BaseJellyfinApiController
             // If requested segment is less than transcoding position, we can't transcode backwards, so assume it's ready
             if (segmentIndex < currentTranscodingIndex)
             {
-                _logger.LogDebug("serving up {0} as transcode index {1} is past requested point {2}", segmentPath, currentTranscodingIndex, segmentIndex);
+                _logger.LogInformation("serving up {0} as transcode index {1} is past requested point {2}", segmentPath, currentTranscodingIndex, segmentIndex);
                 return GetSegmentResult(state, segmentPath, transcodingJob);
             }
         }
@@ -1987,20 +2035,10 @@ public class DynamicHlsController : BaseJellyfinApiController
         {
             while (!cancellationToken.IsCancellationRequested && !transcodingJob.HasExited)
             {
-                if (isInitSegment && System.IO.File.Exists(segmentPath))
-                {
-                    var fileInfo = new System.IO.FileInfo(segmentPath);
-                    if (fileInfo.Length > 0)
-                    {
-                        _logger.LogDebug("Serving up init segment {SegmentPath} as it is ready on disk", segmentPath);
-                        return GetSegmentResult(state, segmentPath, transcodingJob);
-                    }
-                }
-
                 var currentIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
                 if (currentIndex.HasValue && segmentIndex < currentIndex.Value)
                 {
-                    _logger.LogDebug("Serving up {SegmentPath} as transcode index {CurrentIndex} passed requested {SegmentIndex}", segmentPath, currentIndex.Value, segmentIndex);
+                    _logger.LogInformation("Serving up {SegmentPath} as transcode index {CurrentIndex} passed requested {SegmentIndex}", segmentPath, currentIndex.Value, segmentIndex);
                     return GetSegmentResult(state, segmentPath, transcodingJob);
                 }
 
@@ -2010,7 +2048,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 {
                     if (transcodingJob.HasExited || System.IO.File.Exists(nextSegmentPath))
                     {
-                        _logger.LogDebug("Serving up {SegmentPath} as it deemed ready", segmentPath);
+                        _logger.LogInformation("Serving up {SegmentPath} as it deemed ready", segmentPath);
                         return GetSegmentResult(state, segmentPath, transcodingJob);
                     }
                 }
@@ -2029,10 +2067,11 @@ public class DynamicHlsController : BaseJellyfinApiController
             if (!System.IO.File.Exists(segmentPath))
             {
                 _logger.LogWarning("cannot serve {0} as transcoding quit before we got there", segmentPath);
+                return NotFound();
             }
             else
             {
-                _logger.LogDebug("serving {0} as it's on disk and transcoding stopped", segmentPath);
+                _logger.LogInformation("serving {0} as it's on disk and transcoding stopped", segmentPath);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -2040,6 +2079,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         else
         {
             _logger.LogWarning("cannot serve {0} as it doesn't exist and no transcode is running", segmentPath);
+            return NotFound();
         }
 
         return GetSegmentResult(state, segmentPath, transcodingJob);
