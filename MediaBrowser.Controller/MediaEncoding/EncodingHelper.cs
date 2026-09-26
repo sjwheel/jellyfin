@@ -1507,8 +1507,8 @@ namespace MediaBrowser.Controller.MediaEncoding
                         break;
                     case DynamicHdrMetadataRemovalPlan.RemoveDovi:
                         filter += _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.HevcMetadataRemoveDovi)
-                            ? ",hevc_metadata=remove_dovi=1"
-                            : ",dovi_rpu=strip=1";
+                            ? ",hevc_metadata=remove_dovi=1,filter_units=remove_types=63"
+                            : ",dovi_rpu=strip=1,filter_units=remove_types=63";
                         break;
                     case DynamicHdrMetadataRemovalPlan.RemoveHdr10Plus:
                         filter += ",hevc_metadata=remove_hdr10plus=1";
