@@ -177,6 +177,7 @@ namespace MediaBrowser.Controller.MediaEncoding
             None,
             RemoveDovi,
             RemoveHdr10Plus,
+            ConvertDoviToP81,
         }
 
         /// <summary>
@@ -1396,7 +1397,7 @@ namespace MediaBrowser.Controller.MediaEncoding
         /// Please note this check assumes the range check has already been done
         /// and trivial fallbacks like HDR10+ to HDR10, DOVIWithHDR10 to HDR10 is already checked.
         /// </summary>
-        private static DynamicHdrMetadataRemovalPlan ShouldRemoveDynamicHdrMetadata(EncodingJobInfo state)
+        private DynamicHdrMetadataRemovalPlan ShouldRemoveDynamicHdrMetadata(EncodingJobInfo state)
         {
             var videoStream = state.VideoStream;
             if (videoStream.VideoRange is not VideoRange.HDR)
@@ -1435,6 +1436,13 @@ namespace MediaBrowser.Controller.MediaEncoding
 
             if (shouldRemoveDovi)
             {
+                // A true Dolby Vision player that can't decode the enhancement layer can still play
+                // profile 7 as profile 8.1: drop the EL and rewrite the RPU instead of stripping DV.
+                if (requestHasDOVI && CanConvertDoviToP81(videoStream))
+                {
+                    return DynamicHdrMetadataRemovalPlan.ConvertDoviToP81;
+                }
+
                 return DynamicHdrMetadataRemovalPlan.RemoveDovi;
             }
 
@@ -1450,10 +1458,33 @@ namespace MediaBrowser.Controller.MediaEncoding
                 DynamicHdrMetadataRemovalPlan.RemoveDovi => _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.DoviRpuStrip)
                                                             || (IsH265(videoStream) && _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.HevcMetadataRemoveDovi))
                                                             || (IsAv1(videoStream) && _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.Av1MetadataRemoveDovi)),
+                DynamicHdrMetadataRemovalPlan.ConvertDoviToP81 => CanConvertDoviToP81(videoStream),
                 DynamicHdrMetadataRemovalPlan.RemoveHdr10Plus => (IsH265(videoStream) && _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.HevcMetadataRemoveHdr10Plus))
                                                                  || (IsAv1(videoStream) && _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.Av1MetadataRemoveHdr10Plus)),
                 _ => true,
             };
+        }
+
+        /// <summary>
+        /// Profile 7 with an HDR10-compatible base layer (Blu-ray 7.6) can be converted to 8.1 in copy mode.
+        /// </summary>
+        private bool CanConvertDoviToP81(MediaStream videoStream)
+        {
+            return IsH265(videoStream)
+                && videoStream.VideoRangeType == VideoRangeType.DOVIWithEL
+                && videoStream.DvProfile == 7
+                && videoStream.DvBlSignalCompatibilityId == 6
+                && _mediaEncoder.SupportsBitStreamFilterWithOption(BitStreamFilterOptionType.DoviRpuConvertP81);
+        }
+
+        /// <summary>
+        /// Whether a profile 7 stream is delivered to this client as profile 8.1.
+        /// </summary>
+        /// <param name="state">The encoding job info.</param>
+        /// <returns><c>true</c> if the output is converted to Dolby Vision profile 8.1.</returns>
+        public bool IsDoviConvertedToP81(EncodingJobInfo state)
+        {
+            return state?.VideoStream is not null && ShouldRemoveDynamicHdrMetadata(state) == DynamicHdrMetadataRemovalPlan.ConvertDoviToP81;
         }
 
         public bool IsDoviRemoved(EncodingJobInfo state)
@@ -1513,6 +1544,9 @@ namespace MediaBrowser.Controller.MediaEncoding
                         break;
                     case DynamicHdrMetadataRemovalPlan.RemoveHdr10Plus:
                         filter += ",hevc_metadata=remove_hdr10plus=1";
+                        break;
+                    case DynamicHdrMetadataRemovalPlan.ConvertDoviToP81:
+                        filter += ",dovi_rpu=convert=p81:compression=none";
                         break;
                 }
 

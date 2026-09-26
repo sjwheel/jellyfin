@@ -470,9 +470,11 @@ public class DynamicHlsHelper
 
         void AppendDvString()
         {
-            var dvProfile = state.VideoStream.DvProfile;
+            // Profile 7 converted on the fly is delivered as 8.1 (HDR10-compatible base layer).
+            var convertedToP81 = _encodingHelper.IsDoviConvertedToP81(state);
+            var dvProfile = convertedToP81 ? 8 : state.VideoStream.DvProfile;
             var dvLevel = state.VideoStream.DvLevel;
-            var dvRangeString = state.VideoStream.VideoRangeType switch
+            var dvRangeString = convertedToP81 ? "db1p" : state.VideoStream.VideoRangeType switch
             {
                 VideoRangeType.DOVIWithHDR10 => "db1p",
                 VideoRangeType.DOVIWithHLG => "db4h",

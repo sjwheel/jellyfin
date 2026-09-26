@@ -171,7 +171,8 @@ namespace MediaBrowser.MediaEncoding.Encoder
             { BitStreamFilterOptionType.HevcMetadataRemoveHdr10Plus, ("hevc_metadata", "remove_hdr10plus") },
             { BitStreamFilterOptionType.Av1MetadataRemoveDovi, ("av1_metadata", "remove_dovi") },
             { BitStreamFilterOptionType.Av1MetadataRemoveHdr10Plus, ("av1_metadata", "remove_hdr10plus") },
-            { BitStreamFilterOptionType.DoviRpuStrip, ("dovi_rpu", "strip") }
+            { BitStreamFilterOptionType.DoviRpuStrip, ("dovi_rpu", "strip") },
+            { BitStreamFilterOptionType.DoviRpuConvertP81, ("dovi_rpu", "p81") }
         };
 
         // These are the library versions that corresponds to our minimum ffmpeg version 4.4 according to the version table below

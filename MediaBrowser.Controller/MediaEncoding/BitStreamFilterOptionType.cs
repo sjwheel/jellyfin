@@ -29,4 +29,9 @@ public enum BitStreamFilterOptionType
     /// dovi_rpu bsf with strip option.
     /// </summary>
     DoviRpuStrip = 4,
+
+    /// <summary>
+    /// dovi_rpu bsf with convert=p81 option (Dolby Vision profile 7 to 8.1).
+    /// </summary>
+    DoviRpuConvertP81 = 5,
 }
