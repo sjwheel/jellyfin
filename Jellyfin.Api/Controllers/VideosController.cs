@@ -26,7 +26,6 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Net;
 using MediaBrowser.Model.Querying;
-using Jellyfin.Data.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -466,9 +465,7 @@ public class VideosController : BaseJellyfinApiController
         }
 
         // Static stream
-        if (@static.HasValue && @static.Value
-            && !(state.MediaSource.VideoType == VideoType.BluRay || state.MediaSource.VideoType == VideoType.Dvd)
-            && !(state.VideoStream?.VideoRangeType is VideoRangeType.DOVIWithEL or VideoRangeType.DOVIWithELHDR10Plus))
+        if (@static.HasValue && @static.Value && !(state.MediaSource.VideoType == VideoType.BluRay || state.MediaSource.VideoType == VideoType.Dvd))
         {
             var contentType = state.GetMimeType("." + state.OutputContainer, false) ?? state.GetMimeType(state.MediaPath);
 

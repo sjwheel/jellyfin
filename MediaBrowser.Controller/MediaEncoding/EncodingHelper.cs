@@ -1405,6 +1405,12 @@ namespace MediaBrowser.Controller.MediaEncoding
             }
 
             var requestedRangeTypes = state.GetRequestedRangeTypes(state.VideoStream.Codec);
+            if (requestedRangeTypes.Length == 0)
+            {
+                // No capability info (static/progressive requests, e.g. Kodi direct stream): never touch the bitstream.
+                return DynamicHdrMetadataRemovalPlan.None;
+            }
+
             var requestHasHDR10 = requestedRangeTypes.Contains(VideoRangeType.HDR10.ToString(), StringComparison.OrdinalIgnoreCase);
             var requestHasDOVI = requestedRangeTypes.Contains(VideoRangeType.DOVI.ToString(), StringComparison.OrdinalIgnoreCase);
             var requestHasDOVIwithEL = requestedRangeTypes.Contains(VideoRangeType.DOVIWithEL.ToString(), StringComparison.OrdinalIgnoreCase);
@@ -1430,11 +1436,6 @@ namespace MediaBrowser.Controller.MediaEncoding
             if (shouldRemoveDovi)
             {
                 return DynamicHdrMetadataRemovalPlan.RemoveDovi;
-            }
-
-            if (requestedRangeTypes.Length == 0)
-            {
-                return DynamicHdrMetadataRemovalPlan.None;
             }
 
             // If the client is a Dolby Vision Player, remove the HDR10+ metadata to avoid playback issues
