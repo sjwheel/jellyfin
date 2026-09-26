@@ -1405,19 +1405,14 @@ namespace MediaBrowser.Controller.MediaEncoding
             }
 
             var requestedRangeTypes = state.GetRequestedRangeTypes(state.VideoStream.Codec);
-            if (requestedRangeTypes.Length == 0)
-            {
-                return DynamicHdrMetadataRemovalPlan.None;
-            }
-
             var requestHasHDR10 = requestedRangeTypes.Contains(VideoRangeType.HDR10.ToString(), StringComparison.OrdinalIgnoreCase);
             var requestHasDOVI = requestedRangeTypes.Contains(VideoRangeType.DOVI.ToString(), StringComparison.OrdinalIgnoreCase);
             var requestHasDOVIwithEL = requestedRangeTypes.Contains(VideoRangeType.DOVIWithEL.ToString(), StringComparison.OrdinalIgnoreCase);
             var requestHasDOVIwithELHDR10plus = requestedRangeTypes.Contains(VideoRangeType.DOVIWithELHDR10Plus.ToString(), StringComparison.OrdinalIgnoreCase);
 
             var shouldRemoveHdr10Plus = false;
-            // Case 1: Client supports HDR10, does not support DOVI with EL but EL presets
-            var shouldRemoveDovi = (!requestHasDOVIwithEL && requestHasHDR10) && videoStream.VideoRangeType == VideoRangeType.DOVIWithEL;
+            // Case 1: Client does not support DOVI with EL, but EL is present in the stream
+            var shouldRemoveDovi = !requestHasDOVIwithEL && videoStream.VideoRangeType == VideoRangeType.DOVIWithEL;
 
             // Case 2: Client supports DOVI, does not support broken DOVI config
             // Client does not report DOVI support should be allowed to copy bad data for remuxing as HDR10 players would not crash
@@ -1435,6 +1430,11 @@ namespace MediaBrowser.Controller.MediaEncoding
             if (shouldRemoveDovi)
             {
                 return DynamicHdrMetadataRemovalPlan.RemoveDovi;
+            }
+
+            if (requestedRangeTypes.Length == 0)
+            {
+                return DynamicHdrMetadataRemovalPlan.None;
             }
 
             // If the client is a Dolby Vision Player, remove the HDR10+ metadata to avoid playback issues
@@ -2433,6 +2433,15 @@ namespace MediaBrowser.Controller.MediaEncoding
                     {
                         return false;
                     }
+                }
+            }
+
+            if (videoStream.VideoRangeType is VideoRangeType.DOVIWithEL or VideoRangeType.DOVIWithELHDR10Plus)
+            {
+                var dynamicHdrMetadataRemovalPlan = ShouldRemoveDynamicHdrMetadata(state);
+                if (!CanEncoderRemoveDynamicHdrMetadata(dynamicHdrMetadataRemovalPlan, videoStream))
+                {
+                    return false;
                 }
             }
 
@@ -7590,7 +7599,8 @@ namespace MediaBrowser.Controller.MediaEncoding
             if (IsCopyCodec(videoCodec))
             {
                 if (state.VideoStream is not null
-                    && string.Equals(state.OutputContainer, "ts", StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(state.OutputContainer, "ts", StringComparison.OrdinalIgnoreCase)
+                        || ShouldRemoveDynamicHdrMetadata(state) != DynamicHdrMetadataRemovalPlan.None)
                     && !string.Equals(state.VideoStream.NalLengthSize, "0", StringComparison.OrdinalIgnoreCase))
                 {
                     string bitStreamArgs = GetBitStreamArgs(state, MediaStreamType.Video);

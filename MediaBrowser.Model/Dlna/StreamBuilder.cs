@@ -1070,6 +1070,20 @@ namespace MediaBrowser.Model.Dlna
                 }
             }
 
+            if (videoRangeType is VideoRangeType.DOVIWithEL or VideoRangeType.DOVIWithELHDR10Plus)
+            {
+                foreach (var transcodingVideoCodec in playlistItem.VideoCodecs)
+                {
+                    if (string.IsNullOrEmpty(playlistItem.GetOption(transcodingVideoCodec, "rangetype")))
+                    {
+                        playlistItem.SetOption(
+                            transcodingVideoCodec,
+                            "rangetype",
+                            string.Join(',', Enum.GetNames(typeof(VideoRangeType)).Except([nameof(VideoRangeType.DOVIWithEL), nameof(VideoRangeType.DOVIWithELHDR10Plus)])));
+                    }
+                }
+            }
+
             // Honor requested max channels
             playlistItem.GlobalMaxAudioChannels = channelsExceedsLimit ? playlistItem.TranscodingMaxAudioChannels : options.MaxAudioChannels;
 
@@ -2341,7 +2355,73 @@ namespace MediaBrowser.Model.Dlna
                         !CheckVideoConditions(codecProfile.ApplyConditions, mediaSource, videoStream).Any())
                     .SelectMany(codecProfile => CheckVideoConditions(codecProfile.Conditions, mediaSource, videoStream)));
 
+            if (videoStream.VideoRangeType is VideoRangeType.DOVIWithEL or VideoRangeType.DOVIWithELHDR10Plus
+                && !ProfileSupportsDoviWithEl(profile, mediaSource, videoStream, videoCodec, container))
+            {
+                failures |= TranscodeReason.VideoRangeTypeNotSupported;
+            }
+
             return failures;
+        }
+
+        private bool ProfileSupportsDoviWithEl(DeviceProfile profile, MediaSourceInfo mediaSource, MediaStream videoStream, string videoCodec, string container)
+        {
+            if (profile.CodecProfiles is null || profile.CodecProfiles.Length == 0)
+            {
+                return false;
+            }
+
+            var matchingProfiles = profile.CodecProfiles
+                .Where(cp => cp.Type == CodecType.Video
+                    && cp.ContainsAnyCodec(videoCodec, container)
+                    && !CheckVideoConditions(cp.ApplyConditions, mediaSource, videoStream).Any())
+                .ToList();
+
+            if (matchingProfiles.Count == 0)
+            {
+                return false;
+            }
+
+            var rangeType = videoStream.VideoRangeType;
+            var rangeName = rangeType.ToString();
+            var hasExplicitSupport = false;
+
+            foreach (var cp in matchingProfiles)
+            {
+                foreach (var condition in cp.Conditions)
+                {
+                    if (condition.Property != ProfileConditionValue.VideoRangeType)
+                    {
+                        continue;
+                    }
+
+                    var values = condition.Value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                    if (condition.Condition == ProfileConditionType.NotEquals)
+                    {
+                        // If NotEquals explicitly excludes DOVIWithEL / DOVIWithELHDR10Plus, it is unsupported
+                        if (values.Any(v => string.Equals(v, rangeName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(v, nameof(VideoRangeType.DOVIWithEL), StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(v, nameof(VideoRangeType.DOVIWithELHDR10Plus), StringComparison.OrdinalIgnoreCase)))
+                        {
+                            return false;
+                        }
+                    }
+                    else if (condition.Condition is ProfileConditionType.Equals or ProfileConditionType.EqualsAny)
+                    {
+                        // If Equals or EqualsAny does not include DOVIWithEL, then it is unsupported
+                        if (!values.Any(v => string.Equals(v, rangeName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(v, nameof(VideoRangeType.DOVIWithEL), StringComparison.OrdinalIgnoreCase)))
+                        {
+                            return false;
+                        }
+
+                        hasExplicitSupport = true;
+                    }
+                }
+            }
+
+            return hasExplicitSupport;
         }
 
         /// <summary>
