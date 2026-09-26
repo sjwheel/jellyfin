@@ -40,6 +40,11 @@ namespace MediaBrowser.Controller.Extensions
         public const string FfmpegAnalyzeDurationKey = "FFmpeg:analyzeduration";
 
         /// <summary>
+        /// The key for enabling Dolby Vision profile 7 to 8.1 conversion during stream copy.
+        /// </summary>
+        public const string FfmpegDoviP81ConversionKey = "FFmpeg:doviP81Conversion";
+
+        /// <summary>
         /// The key for the FFmpeg image extraction performance tradeoff option.
         /// </summary>
         public const string FfmpegImgExtractPerfTradeoffKey = "FFmpeg:imgExtractPerfTradeoff";
@@ -98,6 +103,14 @@ namespace MediaBrowser.Controller.Extensions
         /// <returns>The FFmpeg analyze duration option.</returns>
         public static string? GetFFmpegAnalyzeDuration(this IConfiguration configuration)
             => configuration[FfmpegAnalyzeDurationKey];
+
+        /// <summary>
+        /// Gets whether Dolby Vision profile 7 to 8.1 conversion is enabled (default: enabled).
+        /// </summary>
+        /// <param name="configuration">The configuration to read the setting from.</param>
+        /// <returns><c>false</c> only if explicitly disabled.</returns>
+        public static bool GetFFmpegDoviP81ConversionEnabled(this IConfiguration configuration)
+            => !string.Equals(configuration[FfmpegDoviP81ConversionKey], "false", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Gets a value indicating whether the server should validate FFmpeg during startup.

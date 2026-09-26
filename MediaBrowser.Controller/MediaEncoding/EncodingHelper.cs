@@ -1470,7 +1470,8 @@ namespace MediaBrowser.Controller.MediaEncoding
         /// </summary>
         private bool CanConvertDoviToP81(MediaStream videoStream)
         {
-            return IsH265(videoStream)
+            return _config.GetFFmpegDoviP81ConversionEnabled()
+                && IsH265(videoStream)
                 && videoStream.VideoRangeType == VideoRangeType.DOVIWithEL
                 && videoStream.DvProfile == 7
                 && videoStream.DvBlSignalCompatibilityId == 6
