@@ -184,6 +184,17 @@ public class DynamicHlsHelper
             queryString += "&AllowVideoStreamCopy=false";
         }
 
+        // Dolby Vision profile 7 converted to 8.1: serve fMP4 segments, where the DV configuration
+        // (dvcC/dvvC with a dvh1 sample entry) travels in-band, as players expect for DV over HLS.
+        var isDoviConvertedToP81 = _encodingHelper.IsDoviConvertedToP81(state);
+        if (isDoviConvertedToP81
+            && !string.Equals(state.Request.SegmentContainer, "mp4", StringComparison.OrdinalIgnoreCase))
+        {
+            var fmp4Query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
+            fmp4Query["SegmentContainer"] = "mp4";
+            queryString = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(string.Empty, fmp4Query);
+        }
+
         // Main stream
         var baseUrl = isLiveStream ? "live.m3u8" : "main.m3u8";
         var playlistUrl = baseUrl + queryString;
@@ -227,6 +238,7 @@ public class DynamicHlsHelper
                 var isEncodingAllowed = isAv1EncodingAllowed || isHevcEncodingAllowed;
 
                 if (isEncodingAllowed
+                    && !isDoviConvertedToP81
                     && EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
                     && state.VideoStream.VideoRange == VideoRange.HDR)
                 {
@@ -249,7 +261,9 @@ public class DynamicHlsHelper
             }
 
             // Provide H.264 SDR entrance for backward compatibility.
-            if (EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
+            // Not for converted DV 8.1: players rank the SDR entrance above DV and silently drop to an SDR transcode.
+            if (!isDoviConvertedToP81
+                && EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
                 && state.VideoStream.VideoRange == VideoRange.HDR)
             {
                 // Force H.264 and disable video stream copy.
