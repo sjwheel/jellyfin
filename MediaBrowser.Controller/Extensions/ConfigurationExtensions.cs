@@ -45,6 +45,11 @@ namespace MediaBrowser.Controller.Extensions
         public const string FfmpegDoviP81ConversionKey = "FFmpeg:doviP81Conversion";
 
         /// <summary>
+        /// The key for the HLS segment container used when converting Dolby Vision profile 7 to 8.1.
+        /// </summary>
+        public const string FfmpegDoviP81SegmentContainerKey = "FFmpeg:doviP81SegmentContainer";
+
+        /// <summary>
         /// The key for the FFmpeg image extraction performance tradeoff option.
         /// </summary>
         public const string FfmpegImgExtractPerfTradeoffKey = "FFmpeg:imgExtractPerfTradeoff";
@@ -111,6 +116,14 @@ namespace MediaBrowser.Controller.Extensions
         /// <returns><c>false</c> only if explicitly disabled.</returns>
         public static bool GetFFmpegDoviP81ConversionEnabled(this IConfiguration configuration)
             => !string.Equals(configuration[FfmpegDoviP81ConversionKey], "false", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Gets the HLS segment container forced when converting Dolby Vision profile 7 to 8.1.
+        /// </summary>
+        /// <param name="configuration">The configuration to read the setting from.</param>
+        /// <returns>"mp4" to force fMP4 segments, or <c>null</c> to keep the client's container (default).</returns>
+        public static string? GetFFmpegDoviP81SegmentContainer(this IConfiguration configuration)
+            => string.Equals(configuration[FfmpegDoviP81SegmentContainerKey], "mp4", StringComparison.OrdinalIgnoreCase) ? "mp4" : null;
 
         /// <summary>
         /// Gets a value indicating whether the server should validate FFmpeg during startup.

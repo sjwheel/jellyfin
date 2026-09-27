@@ -184,10 +184,13 @@ public class DynamicHlsHelper
             queryString += "&AllowVideoStreamCopy=false";
         }
 
-        // Dolby Vision profile 7 converted to 8.1: serve fMP4 segments, where the DV configuration
-        // (dvcC/dvvC with a dvh1 sample entry) travels in-band, as players expect for DV over HLS.
+        // Dolby Vision profile 7 converted to 8.1: optionally force fMP4 segments (DV configuration in-band).
+        // Off by default: Media3 (Jellyfin Android TV) rejects our fMP4 because the AAC track's first tfdt is
+        // negative (encoder priming with -copyts -avoid_negative_ts disabled). The TS path carries the RPUs
+        // in-band and Media3 takes the DV codec from the playlist's SUPPLEMENTAL-CODECS.
         var isDoviConvertedToP81 = _encodingHelper.IsDoviConvertedToP81(state);
         if (isDoviConvertedToP81
+            && _encodingHelper.ForceFmp4ForDoviP81
             && !string.Equals(state.Request.SegmentContainer, "mp4", StringComparison.OrdinalIgnoreCase))
         {
             var fmp4Query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);

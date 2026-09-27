@@ -1488,6 +1488,11 @@ namespace MediaBrowser.Controller.MediaEncoding
             return state?.VideoStream is not null && ShouldRemoveDynamicHdrMetadata(state) == DynamicHdrMetadataRemovalPlan.ConvertDoviToP81;
         }
 
+        /// <summary>
+        /// Gets a value indicating whether HLS segments are forced to fMP4 when converting Dolby Vision to 8.1.
+        /// </summary>
+        public bool ForceFmp4ForDoviP81 => _config.GetFFmpegDoviP81SegmentContainer() is not null;
+
         public bool IsDoviRemoved(EncodingJobInfo state)
         {
             return state?.VideoStream is not null && ShouldRemoveDynamicHdrMetadata(state) == DynamicHdrMetadataRemovalPlan.RemoveDovi
