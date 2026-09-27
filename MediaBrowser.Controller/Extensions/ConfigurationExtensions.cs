@@ -121,9 +121,9 @@ namespace MediaBrowser.Controller.Extensions
         /// Gets the HLS segment container forced when converting Dolby Vision profile 7 to 8.1.
         /// </summary>
         /// <param name="configuration">The configuration to read the setting from.</param>
-        /// <returns>"mp4" to force fMP4 segments, or <c>null</c> to keep the client's container (default).</returns>
+        /// <returns>"mp4" to force fMP4 segments (default), or <c>null</c> ("ts") to keep the client's container.</returns>
         public static string? GetFFmpegDoviP81SegmentContainer(this IConfiguration configuration)
-            => string.Equals(configuration[FfmpegDoviP81SegmentContainerKey], "mp4", StringComparison.OrdinalIgnoreCase) ? "mp4" : null;
+            => string.Equals(configuration[FfmpegDoviP81SegmentContainerKey], "ts", StringComparison.OrdinalIgnoreCase) ? null : "mp4";
 
         /// <summary>
         /// Gets a value indicating whether the server should validate FFmpeg during startup.

@@ -1670,9 +1670,18 @@ public class DynamicHlsController : BaseJellyfinApiController
                 Path.GetFileNameWithoutExtension(outputPath));
         }
 
+        // fMP4 stores decode times unsigned (tfdt). AAC encoder priming makes the first audio timestamp
+        // negative when starting at 0, which Media3 rejects ("Top bit not zero"). For DV 8.1 fMP4 (whose
+        // Media3 clients need fMP4 to reach the DV decoder) shift the job's timestamps to be non-negative;
+        // jobs started by a seek have no negative timestamps and are unaffected.
+        var avoidNegativeTs = string.Equals(segmentContainer, "mp4", StringComparison.OrdinalIgnoreCase)
+            && _encodingHelper.IsDoviConvertedToP81(state)
+                ? "make_non_negative"
+                : "disabled";
+
         return string.Format(
             CultureInfo.InvariantCulture,
-            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} -copyts -avoid_negative_ts disabled -max_muxing_queue_size {6} -f hls -max_delay 5000000 -hls_time {7} -hls_segment_type {8} -start_number {9}{10} -hls_segment_filename \"{11}\" {12} -y \"{13}\"",
+            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} -copyts -avoid_negative_ts {14} -max_muxing_queue_size {6} -f hls -max_delay 5000000 -hls_time {7} -hls_segment_type {8} -start_number {9}{10} -hls_segment_filename \"{11}\" {12} -y \"{13}\"",
             inputModifier,
             _encodingHelper.GetInputArgument(state, _encodingOptions, segmentContainer),
             threads,
@@ -1686,7 +1695,8 @@ public class DynamicHlsController : BaseJellyfinApiController
             baseUrlParam,
             EncodingUtils.NormalizePath(outputTsArg),
             hlsArguments,
-            EncodingUtils.NormalizePath(outputPath)).Trim();
+            EncodingUtils.NormalizePath(outputPath),
+            avoidNegativeTs).Trim();
     }
 
     /// <summary>
