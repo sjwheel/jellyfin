@@ -2364,11 +2364,14 @@ namespace MediaBrowser.Model.Dlna
             return failures;
         }
 
+        // Only an explicit VideoRangeType restriction that leaves out DOVIWithEL makes EL unsupported
+        // (e.g. Jellyfin Android TV). Profiles that say nothing about range types (e.g. the Kodi add-on,
+        // which plays P7 FEL natively on CoreELEC) keep direct play/stream of the untouched file.
         private bool ProfileSupportsDoviWithEl(DeviceProfile profile, MediaSourceInfo mediaSource, MediaStream videoStream, string videoCodec, string container)
         {
             if (profile.CodecProfiles is null || profile.CodecProfiles.Length == 0)
             {
-                return false;
+                return true;
             }
 
             var matchingProfiles = profile.CodecProfiles
@@ -2379,12 +2382,11 @@ namespace MediaBrowser.Model.Dlna
 
             if (matchingProfiles.Count == 0)
             {
-                return false;
+                return true;
             }
 
             var rangeType = videoStream.VideoRangeType;
             var rangeName = rangeType.ToString();
-            var hasExplicitSupport = false;
 
             foreach (var cp in matchingProfiles)
             {
@@ -2415,13 +2417,11 @@ namespace MediaBrowser.Model.Dlna
                         {
                             return false;
                         }
-
-                        hasExplicitSupport = true;
                     }
                 }
             }
 
-            return hasExplicitSupport;
+            return true;
         }
 
         /// <summary>

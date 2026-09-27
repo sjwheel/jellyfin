@@ -136,6 +136,8 @@ namespace Jellyfin.Model.Tests
         [InlineData("TranscodeMedia", "mkv-vp9-vorbis-vtt-2600k", PlayMethod.Transcode, TranscodeReason.DirectPlayError, "Remux", "http")]
         // DirectMedia
         [InlineData("DirectMedia", "mp4-h264-aac-vtt-2600k", PlayMethod.DirectPlay, (TranscodeReason)0, "Remux")]
+        // Profiles without VideoRangeType restrictions (e.g. the Kodi add-on) must direct play DV P7 with EL untouched
+        [InlineData("DirectMedia", "mkv-dvhe.07-eac3-15200k", PlayMethod.DirectPlay, (TranscodeReason)0, "Remux")]
         [InlineData("DirectMedia", "mp4-h264-ac3-aac-srt-2600k", PlayMethod.DirectPlay, (TranscodeReason)0, "Remux")]
         [InlineData("DirectMedia", "mp4-h264-ac3-aacDef-srt-2600k", PlayMethod.DirectPlay, (TranscodeReason)0, "Remux")]
         [InlineData("DirectMedia", "mp4-h264-ac3-srt-2600k", PlayMethod.DirectPlay, (TranscodeReason)0, "Remux")]
