@@ -347,8 +347,71 @@ namespace MediaBrowser.Controller.MediaEncoding
             return state.VideoStream.VideoRange == VideoRange.HDR;
         }
 
+        /// <summary>
+        /// Whether an HDR10-compatible source should be re-encoded to HEVC Main10 HDR10 instead of being tone mapped.
+        /// Applies when the client accepts HDR10 for HEVC and the Intel QSV encoder is used.
+        /// Dynamic metadata (Dolby Vision RPU/EL, HDR10+) is dropped; the static HDR10 base layer is kept.
+        /// </summary>
+        /// <param name="state">Encoding state.</param>
+        /// <param name="options">Encoding options.</param>
+        /// <returns><c>true</c> if the transcode keeps HDR10.</returns>
+        public bool IsHdr10PassthroughTranscode(EncodingJobInfo state, EncodingOptions options)
+        {
+            var videoStream = state?.VideoStream;
+            if (videoStream is null
+                || videoStream.VideoRange != VideoRange.HDR
+                || GetVideoColorBitDepth(state) != 10
+                || !OperatingSystem.IsLinux()
+                || options.HardwareAccelerationType != HardwareAccelerationType.qsv)
+            {
+                return false;
+            }
+
+            // Only sources whose base layer is plain HDR10 (PQ) can be passed through as HDR10.
+            if (videoStream.VideoRangeType is not (VideoRangeType.HDR10
+                or VideoRangeType.HDR10Plus
+                or VideoRangeType.DOVIWithHDR10
+                or VideoRangeType.DOVIWithHDR10Plus
+                or VideoRangeType.DOVIWithEL
+                or VideoRangeType.DOVIWithELHDR10Plus))
+            {
+                return false;
+            }
+
+            var outputCodec = state.ActualOutputVideoCodec ?? state.OutputVideoCodec;
+            if (!(string.Equals(outputCodec, "hevc", StringComparison.OrdinalIgnoreCase)
+                  || string.Equals(outputCodec, "h265", StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            if (!string.Equals(GetVideoEncoder(state, options), "hevc_qsv", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var requestedRangeTypes = state.GetRequestedRangeTypes("hevc");
+            if (!requestedRangeTypes.Contains(VideoRangeType.HDR10.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // Subtitle burn-in overlays are only exercised on 8-bit surfaces; tone map in that case.
+            if (state.SubtitleStream is not null && ShouldEncodeSubtitle(state))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         private bool IsHwTonemapAvailable(EncodingJobInfo state, EncodingOptions options)
         {
+            if (IsHdr10PassthroughTranscode(state, options))
+            {
+                return false;
+            }
+
             if (state.VideoStream is null
                 || !options.EnableTonemapping
                 || GetVideoColorBitDepth(state) < 10)
@@ -397,6 +460,11 @@ namespace MediaBrowser.Controller.MediaEncoding
 
         private bool IsIntelVppTonemapAvailable(EncodingJobInfo state, EncodingOptions options)
         {
+            if (IsHdr10PassthroughTranscode(state, options))
+            {
+                return false;
+            }
+
             if (state.VideoStream is null
                 || !options.EnableVppTonemapping
                 || GetVideoColorBitDepth(state) < 10)
@@ -2168,6 +2236,13 @@ namespace MediaBrowser.Controller.MediaEncoding
                 || profile.Contains("mainstill", StringComparison.OrdinalIgnoreCase))
             {
                 profile = "main";
+            }
+
+            // Except when keeping HDR10: that needs HEVC Main10.
+            if (string.Equals(targetVideoCodec, "hevc", StringComparison.OrdinalIgnoreCase)
+                && IsHdr10PassthroughTranscode(state, encodingOptions))
+            {
+                profile = "main10";
             }
 
             // Extended Profile is not supported by any known h264 encoders, force Main Profile.
@@ -4717,6 +4792,7 @@ namespace MediaBrowser.Controller.MediaEncoding
             var doVaVppTonemap = IsIntelVppTonemapAvailable(state, options);
             var doOclTonemap = !doVaVppTonemap && IsHwTonemapAvailable(state, options);
             var doTonemap = doVaVppTonemap || doOclTonemap;
+            var doHdr10Passthrough = IsHdr10PassthroughTranscode(state, options);
             var doDeintH2645 = doDeintH264 || doDeintHevc;
 
             var hasSubs = state.SubtitleStream is not null && ShouldEncodeSubtitle(state);
@@ -4738,7 +4814,7 @@ namespace MediaBrowser.Controller.MediaEncoding
             /* Make main filters for video stream */
             var mainFilters = new List<string>();
 
-            mainFilters.Add(GetOverwriteColorPropertiesParam(state, doTonemap));
+            mainFilters.Add(GetOverwriteColorPropertiesParam(state, doTonemap || doHdr10Passthrough));
 
             if (isSwDecoder)
             {
@@ -4750,7 +4826,7 @@ namespace MediaBrowser.Controller.MediaEncoding
                     mainFilters.Add(swDeintFilter);
                 }
 
-                var outFormat = doOclTonemap ? "yuv420p10le" : (hasGraphicalSubs ? "yuv420p" : "nv12");
+                var outFormat = (doOclTonemap || doHdr10Passthrough) ? (doHdr10Passthrough ? "p010le" : "yuv420p10le") : (hasGraphicalSubs ? "yuv420p" : "nv12");
                 var swScaleFilter = GetSwScaleFilter(state, options, vidEncoder, swpInW, swpInH, threeDFormat, reqW, reqH, reqMaxW, reqMaxH);
                 if (isMjpegEncoder && !doOclTonemap)
                 {
@@ -4793,7 +4869,7 @@ namespace MediaBrowser.Controller.MediaEncoding
                     mainFilters.Add($"transpose_vaapi=dir={transposeDir}");
                 }
 
-                var outFormat = doTonemap ? (((isQsvDecoder && doVppTranspose) || isRext) ? "p010" : string.Empty) : "nv12";
+                var outFormat = doTonemap ? (((isQsvDecoder && doVppTranspose) || isRext) ? "p010" : string.Empty) : (doHdr10Passthrough ? "p010" : "nv12");
                 var swapOutputWandH = isQsvDecoder && doVppTranspose && swapWAndH;
                 var hwScalePrefix = isQsvDecoder ? "vpp" : "scale";
                 var hwScaleFilter = GetHwScaleFilter(hwScalePrefix, hwFilterSuffix, outFormat, swapOutputWandH, swpInW, swpInH, reqW, reqH, reqMaxW, reqMaxH);

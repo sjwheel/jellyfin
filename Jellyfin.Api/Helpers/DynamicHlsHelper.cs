@@ -404,9 +404,14 @@ public class DynamicHlsHelper
                     }
                 }
             }
+            else if (_encodingHelper.IsHdr10PassthroughTranscode(state, _serverConfigurationManager.GetEncodingOptions()))
+            {
+                // HDR10 sources re-encoded to HEVC Main10 for HDR10 clients.
+                builder.Append(",VIDEO-RANGE=PQ");
+            }
             else
             {
-                // Currently we only encode to SDR.
+                // Otherwise we only encode to SDR.
                 builder.Append(",VIDEO-RANGE=SDR");
             }
         }
@@ -755,6 +760,11 @@ public class DynamicHlsHelper
                 || string.Equals(state.ActualOutputVideoCodec, "av1", StringComparison.OrdinalIgnoreCase))
             {
                 profileString ??= "main";
+            }
+
+            if (_encodingHelper.IsHdr10PassthroughTranscode(state, _serverConfigurationManager.GetEncodingOptions()))
+            {
+                profileString = "main10";
             }
         }
 
