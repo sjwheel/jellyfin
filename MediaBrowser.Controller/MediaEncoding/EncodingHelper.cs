@@ -396,6 +396,15 @@ namespace MediaBrowser.Controller.MediaEncoding
                 return false;
             }
 
+            // The master playlist's HEVC SDR entrance asks for hevc-profile=main; keep it SDR so it stays
+            // distinguishable from the HDR10 variant (players otherwise switch between identical-looking levels).
+            var requestedProfiles = state.GetRequestedProfiles("hevc");
+            if (requestedProfiles.Length > 0
+                && !requestedProfiles.Contains("main10", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
             // Subtitle burn-in overlays are only exercised on 8-bit surfaces; tone map in that case.
             if (state.SubtitleStream is not null && ShouldEncodeSubtitle(state))
             {

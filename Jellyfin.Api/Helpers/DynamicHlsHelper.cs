@@ -254,11 +254,24 @@ public class DynamicHlsHelper
 
                     var sdrVideoUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(baseUrl, sdrPlaylistQuery);
 
+                    // Describe the entrance by its own profile (main) so the HDR10 re-encode check sees it as SDR.
+                    var profileKey = sdrVideoCodec + "-profile";
+                    var hadProfile = state.BaseRequest.StreamOptions.TryGetValue(profileKey, out var originalProfile);
+                    state.BaseRequest.StreamOptions[profileKey] = "main";
+
                     // HACK: Use the same bitrate so that the client can choose by other attributes, such as color range.
                     AppendPlaylist(builder, state, sdrVideoUrl, totalBitrate, subtitleGroup);
 
-                    // Restore the video codec
+                    // Restore the video codec and profile
                     state.OutputVideoCodec = "copy";
+                    if (hadProfile)
+                    {
+                        state.BaseRequest.StreamOptions[profileKey] = originalProfile!;
+                    }
+                    else
+                    {
+                        state.BaseRequest.StreamOptions.Remove(profileKey);
+                    }
                 }
             }
 
