@@ -1969,6 +1969,19 @@ public class DynamicHlsController : BaseJellyfinApiController
         TranscodingJob? transcodingJob,
         CancellationToken cancellationToken)
     {
+        if (transcodingJob is not null)
+        {
+            // Release this request's hold on the job however the request ends: served, aborted
+            // while waiting, or not found. Releasing only after a segment is served leaks the job
+            // when every request for it times out (hls.js gives up after 10s to first byte); its
+            // kill timer never starts and ffmpeg runs to the end of the file, filling the transcode dir.
+            Response.OnCompleted(() =>
+            {
+                _transcodeManager.OnTranscodeEndRequest(transcodingJob);
+                return Task.CompletedTask;
+            });
+        }
+
         bool isInitSegment = segmentPath.EndsWith("-1.mp4", StringComparison.OrdinalIgnoreCase) || segmentIndex == -1;
         if (isInitSegment)
         {
@@ -2105,7 +2118,6 @@ public class DynamicHlsController : BaseJellyfinApiController
             if (transcodingJob is not null)
             {
                 transcodingJob.DownloadPositionTicks = Math.Max(transcodingJob.DownloadPositionTicks ?? segmentEndingPositionTicks, segmentEndingPositionTicks);
-                _transcodeManager.OnTranscodeEndRequest(transcodingJob);
             }
 
             return Task.CompletedTask;
