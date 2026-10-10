@@ -126,7 +126,15 @@ namespace Emby.Server.Implementations.AppBase
             var markerPath = Path.Combine(path, markerName);
             if (!File.Exists(markerPath))
             {
-                FileHelper.CreateEmpty(markerPath);
+                try
+                {
+                    FileHelper.CreateEmpty(markerPath);
+                }
+                catch (IOException) when (File.Exists(markerPath))
+                {
+                    // Another request created the marker at the same moment (e.g. two
+                    // transcodes starting together on an empty transcode dir); it exists now.
+                }
             }
         }
     }

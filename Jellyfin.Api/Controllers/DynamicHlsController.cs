@@ -1540,6 +1540,11 @@ public class DynamicHlsController : BaseJellyfinApiController
                         await DeleteLastFile(playlistPath, segmentExtension, 0).ConfigureAwait(false);
                     }
 
+                    // Segments at or after the new start that the killed job already wrote would be
+                    // taken as "existing" and then wait for a successor only the new job can write,
+                    // which may be minutes away (or never, when throttled). The new job rewrites them.
+                    await DeleteSegmentsFrom(playlistPath, segmentExtension, segmentId == -1 ? 0 : segmentId).ConfigureAwait(false);
+
                     streamingRequest.StartTimeTicks = streamingRequest.CurrentRuntimeTicks;
 
                     var jobCancellationTokenSource = new CancellationTokenSource();
@@ -2177,6 +2182,20 @@ public class DynamicHlsController : BaseJellyfinApiController
         }
 
         await DeleteFile(file.FullName, retryCount).ConfigureAwait(false);
+    }
+
+    private async Task DeleteSegmentsFrom(string playlistPath, string segmentExtension, int fromIndex)
+    {
+        var folder = Path.GetDirectoryName(playlistPath) ?? throw new ArgumentException("Path can't be a root directory.", nameof(playlistPath));
+        var prefix = Path.GetFileNameWithoutExtension(playlistPath);
+        foreach (var file in Directory.EnumerateFiles(folder, prefix + "*" + segmentExtension))
+        {
+            var index = Path.GetFileNameWithoutExtension(file).AsSpan(prefix.Length);
+            if (int.TryParse(index, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) && i >= fromIndex)
+            {
+                await DeleteFile(file, 0).ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task DeleteFile(string path, int retryCount)

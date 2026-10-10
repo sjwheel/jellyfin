@@ -144,7 +144,10 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
 
     private void PingTimer(TranscodingJob job, bool isProgressCheckIn)
     {
-        if (job.HasExited)
+        // An HLS job whose ffmpeg already finished still owns its segment files, so it
+        // needs the kill timer too, or the files are never deleted once the client goes
+        // away without reporting playback stopped. Progressive jobs have no such files.
+        if (job.HasExited && job.Type == TranscodingJobType.Progressive)
         {
             job.StopKillTimer();
             return;
@@ -174,7 +177,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     private async void OnTranscodeKillTimerStopped(object? state)
     {
         var job = state as TranscodingJob ?? throw new ArgumentException($"{nameof(state)} is not of type {nameof(TranscodingJob)}", nameof(state));
-        if (!job.HasExited && job.Type != TranscodingJobType.Progressive)
+        if (job.Type != TranscodingJobType.Progressive)
         {
             var timeSinceLastPing = (DateTime.UtcNow - job.LastPingDate).TotalMilliseconds;
 
@@ -657,6 +660,14 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
         }
 
         job.Dispose();
+
+        // Dispose() dropped the kill timer. Re-arm it for HLS jobs nobody is requesting
+        // right now, so the finished job's files go away PingTimeout after the client's
+        // last request or ping.
+        if (job.Type != TranscodingJobType.Progressive && job.ActiveRequestCount <= 0)
+        {
+            PingTimer(job, false);
+        }
     }
 
     private async Task AcquireResources(StreamState state, CancellationTokenSource cancellationTokenSource)
