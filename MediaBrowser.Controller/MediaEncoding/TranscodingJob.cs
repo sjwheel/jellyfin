@@ -193,7 +193,8 @@ public sealed class TranscodingJob : IDisposable
     /// <param name="intervalMs">Callback interval.</param>
     public void StartKillTimer(Action<object?> callback, int intervalMs)
     {
-        if (HasExited)
+        // Finished HLS jobs still own segment files that only the kill timer deletes.
+        if (HasExited && Type == TranscodingJobType.Progressive)
         {
             return;
         }
@@ -218,7 +219,7 @@ public sealed class TranscodingJob : IDisposable
     /// </summary>
     public void ChangeKillTimerIfStarted()
     {
-        if (HasExited)
+        if (HasExited && Type == TranscodingJobType.Progressive)
         {
             return;
         }
