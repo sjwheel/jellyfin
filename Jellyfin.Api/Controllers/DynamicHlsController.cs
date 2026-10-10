@@ -1478,7 +1478,7 @@ public class DynamicHlsController : BaseJellyfinApiController
 
         TranscodingJob? job;
 
-        if (System.IO.File.Exists(segmentPath))
+        if (IsCompleteSegment(segmentPath, segmentExtension, out _))
         {
             job = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
             _logger.LogInformation("returning {0} [it exists, try 1]", segmentPath);
@@ -1488,7 +1488,7 @@ public class DynamicHlsController : BaseJellyfinApiController
         using (await _transcodeManager.LockAsync(playlistPath, HttpContext.RequestAborted).ConfigureAwait(false))
         {
             var startTranscoding = false;
-            if (System.IO.File.Exists(segmentPath))
+            if (IsCompleteSegment(segmentPath, segmentExtension, out _))
             {
                 job = _transcodeManager.OnTranscodeBeginRequest(playlistPath, TranscodingJobType);
                 _logger.LogInformation("returning {0} [it exists, try 2]", segmentPath);
@@ -2038,8 +2038,8 @@ public class DynamicHlsController : BaseJellyfinApiController
             return NotFound();
         }
 
-        var segmentExists = System.IO.File.Exists(segmentPath);
-        if (segmentExists)
+        bool isComplete = IsCompleteSegment(segmentPath, segmentExtension, out var fileLength);
+        if (isComplete)
         {
             if (transcodingJob is null || transcodingJob.HasExited)
             {
@@ -2057,64 +2057,122 @@ public class DynamicHlsController : BaseJellyfinApiController
                 return GetSegmentResult(state, segmentPath, transcodingJob);
             }
         }
+        else
+        {
+            // Segment exists on disk but is 0 bytes or incomplete.
+            // If the transcode job is already past this segment, or has exited, it will never complete.
+            if (transcodingJob is null || transcodingJob.HasExited)
+            {
+                if (IsDiskSpaceExhausted(segmentPath))
+                {
+                    _logger.LogError("Transcode directory has insufficient space for {SegmentPath}. Transcode job exited.", segmentPath);
+                    return StatusCode(StatusCodes.Status507InsufficientStorage);
+                }
+
+                if (System.IO.File.Exists(segmentPath))
+                {
+                    _logger.LogError("Transcoding job exited leaving incomplete segment {SegmentPath} ({Length} bytes)", segmentPath, fileLength);
+                    return StatusCode(StatusCodes.Status500InternalServerError);
+                }
+            }
+            else
+            {
+                var currentTranscodingIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
+                if (currentTranscodingIndex.HasValue && segmentIndex < currentTranscodingIndex.Value)
+                {
+                    if (IsDiskSpaceExhausted(segmentPath))
+                    {
+                        _logger.LogError("Transcode directory has insufficient space for {SegmentPath}. Failing transcoding job {JobId}.", segmentPath, transcodingJob.Id);
+                        await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                        return StatusCode(StatusCodes.Status507InsufficientStorage);
+                    }
+
+                    _logger.LogError("Transcoder passed index {SegmentIndex} but segment {SegmentPath} is incomplete ({Length} bytes). Failing job {JobId}.", segmentIndex, segmentPath, fileLength, transcodingJob.Id);
+                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                    return StatusCode(StatusCodes.Status500InternalServerError);
+                }
+            }
+        }
 
         var nextSegmentPath = GetSegmentPath(state, playlistPath, segmentIndex + 1);
         if (transcodingJob is not null)
         {
             while (!cancellationToken.IsCancellationRequested && !transcodingJob.HasExited)
             {
-                var currentIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
-                if (currentIndex.HasValue && segmentIndex < currentIndex.Value)
+                if (IsDiskSpaceExhausted(segmentPath))
                 {
-                    _logger.LogInformation("Serving up {SegmentPath} as transcode index {CurrentIndex} passed requested {SegmentIndex}", segmentPath, currentIndex.Value, segmentIndex);
-                    return GetSegmentResult(state, segmentPath, transcodingJob);
+                    _logger.LogError("Transcode directory has insufficient disk space for {SegmentPath}. Failing job {JobId}.", segmentPath, transcodingJob.Id);
+                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                    return StatusCode(StatusCodes.Status507InsufficientStorage);
                 }
 
-                // To be considered ready, the segment file has to exist AND
-                // either the transcoding job should be done or next segment should also exist
-                if (segmentExists)
+                isComplete = IsCompleteSegment(segmentPath, segmentExtension, out fileLength);
+                var currentIndex = GetCurrentTranscodingIndex(playlistPath, segmentExtension);
+
+                if (isComplete)
                 {
+                    if (currentIndex.HasValue && segmentIndex < currentIndex.Value)
+                    {
+                        _logger.LogInformation("Serving up {SegmentPath} as transcode index {CurrentIndex} passed requested {SegmentIndex}", segmentPath, currentIndex.Value, segmentIndex);
+                        return GetSegmentResult(state, segmentPath, transcodingJob);
+                    }
+
                     if (transcodingJob.HasExited || System.IO.File.Exists(nextSegmentPath))
                     {
                         _logger.LogInformation("Serving up {SegmentPath} as it deemed ready", segmentPath);
                         return GetSegmentResult(state, segmentPath, transcodingJob);
                     }
                 }
-                else
+                else if (currentIndex.HasValue && segmentIndex < currentIndex.Value)
                 {
-                    segmentExists = System.IO.File.Exists(segmentPath);
-                    if (segmentExists)
-                    {
-                        continue; // avoid unnecessary waiting if segment just became available
-                    }
+                    // Transcoder already passed this segment, but the file is not complete!
+                    _logger.LogError("Transcoder passed index {SegmentIndex} but segment {SegmentPath} is incomplete ({Length} bytes). Failing job {JobId}.", segmentIndex, segmentPath, fileLength, transcodingJob.Id);
+                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                    return StatusCode(StatusCodes.Status500InternalServerError);
                 }
 
                 await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!System.IO.File.Exists(segmentPath))
+            isComplete = IsCompleteSegment(segmentPath, segmentExtension, out fileLength);
+            if (!isComplete)
             {
+                if (IsDiskSpaceExhausted(segmentPath))
+                {
+                    _logger.LogError("Transcode directory has insufficient disk space for {SegmentPath} after transcode exited.", segmentPath);
+                    return StatusCode(StatusCodes.Status507InsufficientStorage);
+                }
+
+                if (System.IO.File.Exists(segmentPath))
+                {
+                    _logger.LogError("Transcoding stopped with incomplete segment {SegmentPath} ({Length} bytes)", segmentPath, fileLength);
+                    return StatusCode(StatusCodes.Status500InternalServerError);
+                }
+
                 _logger.LogWarning("cannot serve {0} as transcoding quit before we got there", segmentPath);
                 return NotFound();
             }
-            else
-            {
-                _logger.LogInformation("serving {0} as it's on disk and transcoding stopped", segmentPath);
-            }
 
+            _logger.LogInformation("serving {0} as it's on disk and transcoding stopped", segmentPath);
             cancellationToken.ThrowIfCancellationRequested();
+            return GetSegmentResult(state, segmentPath, transcodingJob);
         }
         else
         {
             _logger.LogWarning("cannot serve {0} as it doesn't exist and no transcode is running", segmentPath);
             return NotFound();
         }
-
-        return GetSegmentResult(state, segmentPath, transcodingJob);
     }
 
     private ActionResult GetSegmentResult(StreamState state, string segmentPath, TranscodingJob? transcodingJob)
     {
+        var fileInfo = new FileInfo(segmentPath);
+        if (!fileInfo.Exists || fileInfo.Length == 0)
+        {
+            _logger.LogError("Refusing to serve 0-byte or missing segment {SegmentPath}", segmentPath);
+            return StatusCode(StatusCodes.Status500InternalServerError);
+        }
+
         var segmentEndingPositionTicks = state.Request.CurrentRuntimeTicks + state.Request.ActualSegmentLengthTicks;
 
         Response.OnCompleted(() =>
@@ -2129,6 +2187,116 @@ public class DynamicHlsController : BaseJellyfinApiController
         });
 
         return FileStreamResponseHelpers.GetStaticFileResult(segmentPath, MimeTypes.GetMimeType(segmentPath));
+    }
+
+    private static bool IsDiskSpaceExhausted(string path)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return false;
+            }
+
+            var drive = new DriveInfo(directory);
+            return drive.AvailableFreeSpace < 1024 * 1024;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsCompleteSegment(string segmentPath, string segmentExtension, out long fileLength)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(segmentPath);
+            if (!fileInfo.Exists)
+            {
+                fileLength = 0;
+                return false;
+            }
+
+            fileLength = fileInfo.Length;
+            if (fileLength == 0)
+            {
+                return false;
+            }
+
+            if (string.Equals(segmentExtension, ".ts", StringComparison.OrdinalIgnoreCase))
+            {
+                return fileLength % 188 == 0;
+            }
+
+            if (string.Equals(segmentExtension, ".mp4", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(segmentExtension, ".m4s", StringComparison.OrdinalIgnoreCase))
+            {
+                if (fileLength < 32)
+                {
+                    return false;
+                }
+
+                using var stream = new FileStream(segmentPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                Span<byte> buffer = stackalloc byte[8];
+                long pos = 0;
+                while (pos < fileLength)
+                {
+                    int read = stream.Read(buffer);
+                    if (read < 8)
+                    {
+                        return false;
+                    }
+
+                    uint boxSize = (uint)((buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3]);
+                    if (boxSize == 0)
+                    {
+                        break;
+                    }
+
+                    if (boxSize == 1)
+                    {
+                        if (stream.Read(buffer) < 8)
+                        {
+                            return false;
+                        }
+
+                        ulong largeSize = ((ulong)buffer[0] << 56) | ((ulong)buffer[1] << 48)
+                            | ((ulong)buffer[2] << 40) | ((ulong)buffer[3] << 32)
+                            | ((ulong)buffer[4] << 24) | ((ulong)buffer[5] << 16)
+                            | ((ulong)buffer[6] << 8) | buffer[7];
+
+                        if (pos + (long)largeSize > fileLength)
+                        {
+                            return false;
+                        }
+
+                        pos += (long)largeSize;
+                        stream.Seek(pos, SeekOrigin.Begin);
+                    }
+                    else
+                    {
+                        if (boxSize < 8 || pos + boxSize > fileLength)
+                        {
+                            return false;
+                        }
+
+                        pos += boxSize;
+                        stream.Seek(pos, SeekOrigin.Begin);
+                    }
+                }
+
+                return true;
+            }
+
+            return fileLength > 0;
+        }
+        catch (IOException)
+        {
+            fileLength = 0;
+            return false;
+        }
     }
 
     private int? GetCurrentTranscodingIndex(string playlist, string segmentExtension)
