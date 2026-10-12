@@ -2083,12 +2083,12 @@ public class DynamicHlsController : BaseJellyfinApiController
                     if (IsDiskSpaceExhausted(segmentPath))
                     {
                         _logger.LogError("Transcode directory has insufficient space for {SegmentPath}. Failing transcoding job {JobId}.", segmentPath, transcodingJob.Id);
-                        await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                        await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, _ => true).ConfigureAwait(false);
                         return StatusCode(StatusCodes.Status507InsufficientStorage);
                     }
 
                     _logger.LogError("Transcoder passed index {SegmentIndex} but segment {SegmentPath} is incomplete ({Length} bytes). Failing job {JobId}.", segmentIndex, segmentPath, fileLength, transcodingJob.Id);
-                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, _ => true).ConfigureAwait(false);
                     return StatusCode(StatusCodes.Status500InternalServerError);
                 }
             }
@@ -2102,7 +2102,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 if (IsDiskSpaceExhausted(segmentPath))
                 {
                     _logger.LogError("Transcode directory has insufficient disk space for {SegmentPath}. Failing job {JobId}.", segmentPath, transcodingJob.Id);
-                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, _ => true).ConfigureAwait(false);
                     return StatusCode(StatusCodes.Status507InsufficientStorage);
                 }
 
@@ -2127,7 +2127,7 @@ public class DynamicHlsController : BaseJellyfinApiController
                 {
                     // Transcoder already passed this segment, but the file is not complete!
                     _logger.LogError("Transcoder passed index {SegmentIndex} but segment {SegmentPath} is incomplete ({Length} bytes). Failing job {JobId}.", segmentIndex, segmentPath, fileLength, transcodingJob.Id);
-                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, p => false).ConfigureAwait(false);
+                    await _transcodeManager.KillTranscodingJobs(state.Request.DeviceId, state.Request.PlaySessionId, _ => true).ConfigureAwait(false);
                     return StatusCode(StatusCodes.Status500InternalServerError);
                 }
 
