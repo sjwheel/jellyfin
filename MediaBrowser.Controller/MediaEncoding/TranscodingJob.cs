@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Logging;
@@ -147,6 +148,11 @@ public sealed class TranscodingJob : IDisposable
     public DateTime LastPingDate { get; set; }
 
     /// <summary>
+    /// Gets a value indicating whether the job was killed (removed from the active jobs).
+    /// </summary>
+    public bool IsKilled { get; private set; }
+
+    /// <summary>
     /// Gets or sets ping timeout.
     /// </summary>
     public int PingTimeout { get; set; }
@@ -169,11 +175,30 @@ public sealed class TranscodingJob : IDisposable
     {
         lock (_timerLock)
         {
-            if (_killTimer is not null)
-            {
-                _killTimer.Dispose();
-                _killTimer = null;
-            }
+            DisposeKillTimerLocked();
+        }
+    }
+
+    /// <summary>
+    /// Marks the job as killed and drops its kill timer for good. A killed job's ffmpeg exit
+    /// must not re-arm the timer: when it fires it deletes the files under <see cref="Path"/>,
+    /// which by then belong to the job that replaced this one (e.g. after a seek).
+    /// </summary>
+    public void MarkKilled()
+    {
+        lock (_timerLock)
+        {
+            IsKilled = true;
+            DisposeKillTimerLocked();
+        }
+    }
+
+    private void DisposeKillTimerLocked()
+    {
+        if (_killTimer is not null)
+        {
+            _killTimer.Dispose();
+            _killTimer = null;
         }
     }
 
@@ -193,6 +218,11 @@ public sealed class TranscodingJob : IDisposable
     /// <param name="intervalMs">Callback interval.</param>
     public void StartKillTimer(Action<object?> callback, int intervalMs)
     {
+        if (IsKilled)
+        {
+            return;
+        }
+
         // Finished HLS jobs still own segment files that only the kill timer deletes.
         if (HasExited && Type == TranscodingJobType.Progressive)
         {
@@ -201,6 +231,11 @@ public sealed class TranscodingJob : IDisposable
 
         lock (_timerLock)
         {
+            if (IsKilled)
+            {
+                return;
+            }
+
             if (_killTimer is null)
             {
                 _logger.LogDebug("Starting kill timer at {0}ms. JobId {1} PlaySessionId {2}", intervalMs, Id, PlaySessionId);
@@ -266,6 +301,11 @@ public sealed class TranscodingJob : IDisposable
                 }
                 catch (InvalidOperationException)
                 {
+                }
+                catch (IOException ex)
+                {
+                    // ffmpeg exited between the HasExited check and the write ("Broken pipe").
+                    _logger.LogDebug(ex, "ffmpeg stdin already closed for {Path}", Path);
                 }
             }
 #pragma warning restore CA1849

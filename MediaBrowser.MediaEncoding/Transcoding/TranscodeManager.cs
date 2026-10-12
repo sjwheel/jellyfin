@@ -177,6 +177,12 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
     private async void OnTranscodeKillTimerStopped(object? state)
     {
         var job = state as TranscodingJob ?? throw new ArgumentException($"{nameof(state)} is not of type {nameof(TranscodingJob)}", nameof(state));
+        if (job.IsKilled)
+        {
+            // Already killed (e.g. replaced by a seek restart); its path now belongs to the successor.
+            return;
+        }
+
         if (job.Type != TranscodingJobType.Progressive)
         {
             var timeSinceLastPing = (DateTime.UtcNow - job.LastPingDate).TotalMilliseconds;
@@ -220,7 +226,7 @@ public sealed class TranscodeManager : ITranscodeManager, IDisposable
 
     private async Task KillTranscodingJob(TranscodingJob job, bool closeLiveStream, Func<string, bool> delete)
     {
-        job.DisposeKillTimer();
+        job.MarkKilled();
 
         _logger.LogDebug("KillTranscodingJob - JobId {0} PlaySessionId {1}. Killing transcoding", job.Id, job.PlaySessionId);
 
