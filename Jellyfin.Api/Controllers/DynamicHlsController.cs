@@ -1676,13 +1676,13 @@ public class DynamicHlsController : BaseJellyfinApiController
         }
 
         // fMP4 stores decode times unsigned (tfdt). AAC encoder priming makes the first audio timestamp
-        // negative when starting at 0, which Media3 rejects ("Top bit not zero"). For DV 8.1 fMP4 (whose
-        // Media3 clients need fMP4 to reach the DV decoder) shift the job's timestamps to be non-negative;
-        // jobs started by a seek have no negative timestamps and are unaffected.
+        // negative when starting at 0, which Media3 rejects ("Top bit not zero") and Chrome stalls on
+        // due to timestamp disparity between audio (underflowed uint64) and video. Shift timestamps to
+        // be non-negative for all fMP4 segments; jobs started by a seek have no negative timestamps and
+        // are unaffected.
         var avoidNegativeTs = string.Equals(segmentContainer, "mp4", StringComparison.OrdinalIgnoreCase)
-            && _encodingHelper.IsDoviConvertedToP81(state)
-                ? "make_non_negative"
-                : "disabled";
+            ? "make_non_negative"
+            : "disabled";
 
         return string.Format(
             CultureInfo.InvariantCulture,
