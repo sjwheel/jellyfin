@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
@@ -10,6 +11,11 @@ namespace MediaBrowser.Controller.Streaming;
 /// </summary>
 public class StreamState : EncodingJobInfo, IDisposable
 {
+    /// <summary>
+    /// Source video bitrate from which browser remuxes get short HLS segments.
+    /// </summary>
+    public const int HighBitrateRemuxThreshold = 40_000_000;
+
     private readonly IMediaSourceManager _mediaSourceManager;
     private readonly ITranscodeManager _transcodeManager;
     private bool _disposed;
@@ -98,11 +104,31 @@ public class StreamState : EncodingJobInfo, IDisposable
                     return 3;
                 }
 
+                if (IsHighBitrateBrowserRemux())
+                {
+                    return 2;
+                }
+
                 return 6;
             }
 
             return 3;
         }
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether this is a high bitrate video remux of a Matroska file to a browser.
+    /// Browsers play HLS through MSE, whose video SourceBuffer is only ~150 MB in Chromium, and jellyfin-web
+    /// caps the hls.js forward buffer to 6 s above 25 Mbps. At UHD remux bitrates a 6 s segment is ~60 MB, so
+    /// appends hit QuotaExceededError and hls.js flushes and refetches in a loop (playback pauses). 2 s segments
+    /// keep each append ~20 MB. Only Matroska, where the playlist is built from the real keyframes.
+    /// </summary>
+    /// <returns><c>true</c> if short segments should be used.</returns>
+    private bool IsHighBitrateBrowserRemux()
+    {
+        return (VideoStream?.BitRate ?? 0) >= HighBitrateRemuxThreshold
+            && (UserAgent ?? string.Empty).Contains("Mozilla/", StringComparison.Ordinal)
+            && string.Equals(Path.GetExtension(MediaPath), ".mkv", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
