@@ -7,6 +7,7 @@ using Jellyfin.Api.Extensions;
 using Jellyfin.Database.Implementations.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.MediaSegments;
 using MediaBrowser.Model.MediaSegments;
 using MediaBrowser.Model.Querying;
@@ -53,6 +54,12 @@ public class MediaSegmentsController : BaseJellyfinApiController
         if (item is null)
         {
             return NotFound();
+        }
+
+        // EDL-derived segments (skips) only go to the EDL clients; Kodi etc. play the item untouched.
+        if (EdlMute.HasEdl(item.Path) && !EdlMute.AppliesToClient(User.GetClient(), User.GetDevice()))
+        {
+            return Ok(new QueryResult<MediaSegmentDto>([]));
         }
 
         var libraryOptions = _libraryManager.GetLibraryOptions(item);

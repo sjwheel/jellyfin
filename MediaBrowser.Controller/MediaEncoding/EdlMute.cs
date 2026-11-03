@@ -9,15 +9,17 @@ namespace MediaBrowser.Controller.MediaEncoding;
 
 /// <summary>
 /// Server-side muting from a sidecar EDL ("{video}.edl", lines "start end 1").
-/// Only clients listed in JELLYFIN_EDL_MUTE_CLIENTS (comma-separated, matched
+/// Only clients listed in JELLYFIN_EDL_CLIENTS (comma-separated, matched
 /// case-insensitively as a substring of the client app name or the device name)
 /// get it: for them PlaybackInfo turns off direct play and audio stream copy, and
 /// the audio transcode gets a volume=0 filter over each window. The video is still
-/// stream copied. Everything else (Kodi, browsers, ...) plays untouched.
+/// stream copied. They are also the only clients that get the media segments of an
+/// item with a sidecar EDL (EdlToMediaSegments plugin skips). Everything else (Kodi,
+/// browsers, ...) plays untouched.
 /// </summary>
 public static class EdlMute
 {
-    private static readonly string[] _clients = (Environment.GetEnvironmentVariable("JELLYFIN_EDL_MUTE_CLIENTS") ?? string.Empty)
+    private static readonly string[] _clients = (Environment.GetEnvironmentVariable("JELLYFIN_EDL_CLIENTS") ?? string.Empty)
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     private static readonly ConcurrentDictionary<string, (DateTime Modified, IReadOnlyList<EdlMuteWindow> Windows)> _cache = new(StringComparer.Ordinal);
@@ -27,10 +29,18 @@ public static class EdlMute
     /// </summary>
     /// <param name="client">The client app name, e.g. "Jellyfin Android TV".</param>
     /// <param name="device">The device name, e.g. "Basement Google TV streamer".</param>
-    /// <returns><c>true</c> if the client or device matches JELLYFIN_EDL_MUTE_CLIENTS.</returns>
+    /// <returns><c>true</c> if the client or device matches JELLYFIN_EDL_CLIENTS.</returns>
     public static bool AppliesToClient(string? client, string? device)
         => _clients.Any(c => (client?.Contains(c, StringComparison.OrdinalIgnoreCase) ?? false)
             || (device?.Contains(c, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    /// <summary>
+    /// Whether a media file has a sidecar EDL.
+    /// </summary>
+    /// <param name="mediaPath">The media file path.</param>
+    /// <returns><c>true</c> if "{video}.edl" exists.</returns>
+    public static bool HasEdl(string? mediaPath)
+        => !string.IsNullOrEmpty(mediaPath) && File.Exists(Path.ChangeExtension(mediaPath, ".edl"));
 
     /// <summary>
     /// Gets the mute windows (EDL action 1) for a media file, or an empty list.
