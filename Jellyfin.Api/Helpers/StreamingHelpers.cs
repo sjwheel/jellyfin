@@ -177,6 +177,17 @@ public static class StreamingHelpers
                 : GetOutputFileExtension(state, mediaSource);
         }
 
+        if (!streamingRequest.Static
+            && EdlMute.AppliesToClient(httpContext.User.GetClient(), httpContext.User.GetDevice()))
+        {
+            var muteWindows = EdlMute.GetMuteWindows(state.MediaPath);
+            if (muteWindows.Count > 0)
+            {
+                state.EdlMuteWindows = muteWindows;
+                streamingRequest.AllowAudioStreamCopy = false;
+            }
+        }
+
         var outputAudioCodec = streamingRequest.AudioCodec;
         state.OutputAudioCodec = outputAudioCodec;
         state.OutputContainer = (containerInternal ?? string.Empty).TrimStart('.');

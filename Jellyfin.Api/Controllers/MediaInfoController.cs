@@ -13,6 +13,7 @@ using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Devices;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -189,8 +190,11 @@ public class MediaInfoController : BaseJellyfinApiController
         if (profile is not null)
         {
             // set device specific data
+            var edlMuteClient = EdlMute.AppliesToClient(User.GetClient(), User.GetDevice());
             foreach (var mediaSource in info.MediaSources)
             {
+                // EDL muting needs the server to transcode the audio (the video is still copied).
+                var edlMute = edlMuteClient && EdlMute.GetMuteWindows(mediaSource.Path).Count > 0;
                 _mediaInfoHelper.SetDeviceSpecificData(
                     item,
                     mediaSource,
@@ -204,11 +208,11 @@ public class MediaInfoController : BaseJellyfinApiController
                     maxAudioChannels,
                     info.PlaySessionId!,
                     userId ?? Guid.Empty,
-                    enableDirectPlay.Value,
-                    enableDirectStream.Value,
+                    enableDirectPlay.Value && !edlMute,
+                    enableDirectStream.Value && !edlMute,
                     enableTranscoding.Value,
                     allowVideoStreamCopy.Value,
-                    allowAudioStreamCopy.Value,
+                    allowAudioStreamCopy.Value && !edlMute,
                     playbackInfoDto?.AlwaysBurnInSubtitleWhenTranscoding ?? false,
                     Request.HttpContext.GetNormalizedRemoteIP());
             }

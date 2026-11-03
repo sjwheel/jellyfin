@@ -72,6 +72,11 @@ namespace MediaBrowser.Controller.MediaEncoding
 
         public string MediaPath { get; set; }
 
+        /// <summary>
+        /// Gets or sets the EDL mute windows applied to the audio transcode (see <see cref="EdlMute"/>).
+        /// </summary>
+        public IReadOnlyList<EdlMuteWindow> EdlMuteWindows { get; set; }
+
         public bool IsInputVideo { get; set; }
 
         public string OutputAudioCodec { get; set; }

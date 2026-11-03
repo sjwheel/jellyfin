@@ -2948,6 +2948,13 @@ namespace MediaBrowser.Controller.MediaEncoding
             }
 
             var isCopyingTimestamps = state.CopyTimestamps || state.TranscodingType != TranscodingJobType.Progressive;
+            if (state.EdlMuteWindows is { Count: > 0 } muteWindows)
+            {
+                // With copied timestamps t is the source time; otherwise the output restarts at the seek point.
+                var offset = isCopyingTimestamps ? 0 : TimeSpan.FromTicks(state.StartTimeTicks ?? 0).TotalSeconds;
+                filters.Add(EdlMute.BuildFilter(muteWindows, offset));
+            }
+
             if (state.SubtitleStream is not null && state.SubtitleStream.IsTextSubtitleStream && ShouldEncodeSubtitle(state) && !isCopyingTimestamps)
             {
                 var seconds = TimeSpan.FromTicks(state.StartTimeTicks ?? 0).TotalSeconds;
