@@ -175,6 +175,14 @@ public static class StreamingHelpers
 
         encodingHelper.AttachMediaSourceInfo(state, encodingOptions, mediaSource, url);
 
+        if (singleAudio)
+        {
+            // AttachMediaSourceInfo renegotiates the codec against the server's encoder whitelist, which lacks
+            // "eac3" (it would fall back to ac3, capped at 640 kbps); ffmpeg's eac3 encoder is always there.
+            state.SupportedAudioCodecs = SingleAudioTrack.OutputCodecs;
+            streamingRequest.AudioCodec = SingleAudioTrack.OutputCodecs[0];
+        }
+
         string? containerInternal = Path.GetExtension(state.RequestedUrl);
 
         if (string.IsNullOrEmpty(containerInternal)
@@ -278,7 +286,7 @@ public static class StreamingHelpers
                 }
             }
 
-            if (state.AudioStream is not null && !EncodingHelper.IsCopyCodec(state.OutputAudioCodec) && string.Equals(state.AudioStream.Codec, state.OutputAudioCodec, StringComparison.OrdinalIgnoreCase) && state.OutputAudioBitrate.HasValue)
+            if (!singleAudio && state.AudioStream is not null && !EncodingHelper.IsCopyCodec(state.OutputAudioCodec) && string.Equals(state.AudioStream.Codec, state.OutputAudioCodec, StringComparison.OrdinalIgnoreCase) && state.OutputAudioBitrate.HasValue)
             {
                 state.OutputAudioCodec = state.SupportedAudioCodecs.Where(c => !EncodingHelper.LosslessAudioCodecs.Contains(c)).FirstOrDefault(mediaEncoder.CanEncodeToAudioCodec);
             }
