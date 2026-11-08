@@ -8,6 +8,7 @@ using Jellyfin.Api.Attributes;
 using Jellyfin.Api.Extensions;
 using Jellyfin.Api.Helpers;
 using Jellyfin.Api.Models.MediaInfoDtos;
+using Jellyfin.Data.Enums;
 using Jellyfin.Extensions;
 using MediaBrowser.Common.Extensions;
 using MediaBrowser.Controller.Devices;
@@ -191,10 +192,22 @@ public class MediaInfoController : BaseJellyfinApiController
         {
             // set device specific data
             var edlMuteClient = EdlMute.AppliesToClient(User.GetClient(), User.GetDevice());
+            var singleAudioClient = item.MediaType == MediaType.Video
+                && SingleAudioTrack.AppliesToClient(User.GetClient(), User.GetDevice());
             foreach (var mediaSource in info.MediaSources)
             {
                 // EDL muting needs the server to transcode the audio (the video is still copied).
                 var edlMute = edlMuteClient && EdlMute.GetMuteWindows(mediaSource.Path).Count > 0;
+
+                // Single audio track mode: list only the best track and always serve it as E-AC-3 from the server.
+                var sourceAudioStreamIndex = audioStreamIndex;
+                var singleAudio = false;
+                if (singleAudioClient && SingleAudioTrack.ApplyTo(mediaSource) is { } bestAudio)
+                {
+                    sourceAudioStreamIndex = bestAudio.Index;
+                    singleAudio = true;
+                }
+
                 _mediaInfoHelper.SetDeviceSpecificData(
                     item,
                     mediaSource,
@@ -203,13 +216,13 @@ public class MediaInfoController : BaseJellyfinApiController
                     maxStreamingBitrate ?? profile.MaxStreamingBitrate,
                     startTimeTicks ?? 0,
                     mediaSourceId ?? string.Empty,
-                    audioStreamIndex,
+                    sourceAudioStreamIndex,
                     subtitleStreamIndex,
                     maxAudioChannels,
                     info.PlaySessionId!,
                     userId ?? Guid.Empty,
-                    enableDirectPlay.Value && !edlMute,
-                    enableDirectStream.Value && !edlMute,
+                    enableDirectPlay.Value && !edlMute && !singleAudio,
+                    enableDirectStream.Value && !edlMute && !singleAudio,
                     enableTranscoding.Value,
                     allowVideoStreamCopy.Value,
                     allowAudioStreamCopy.Value && !edlMute,

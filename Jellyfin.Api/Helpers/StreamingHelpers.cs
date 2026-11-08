@@ -152,6 +152,25 @@ public static class StreamingHelpers
             }
         }
 
+        // Single audio track mode: whatever the client asked for, play the best track as E-AC-3 (or copy E-AC-3/AC-3).
+        var singleAudio = false;
+        if (!streamingRequest.Static
+            && state.IsInputVideo
+            && mediaSource is not null
+            && SingleAudioTrack.AppliesToClient(httpContext.User.GetClient(), httpContext.User.GetDevice())
+            && SingleAudioTrack.SelectBest(mediaSource.MediaStreams) is { } bestAudio)
+        {
+            singleAudio = true;
+            streamingRequest.AudioStreamIndex = bestAudio.Index;
+            streamingRequest.AudioCodec = SingleAudioTrack.OutputCodecs[0];
+            streamingRequest.AudioChannels = null;
+            streamingRequest.MaxAudioChannels = 6;
+            streamingRequest.TranscodingMaxAudioChannels = 6;
+            streamingRequest.AudioBitRate = Math.Max(SingleAudioTrack.Bitrate, bestAudio.BitRate ?? 0);
+            state.SupportedAudioCodecs = SingleAudioTrack.OutputCodecs;
+            state.Request.AudioCodec = SingleAudioTrack.OutputCodecs[0];
+        }
+
         var encodingOptions = serverConfigurationManager.GetEncodingOptions();
 
         encodingHelper.AttachMediaSourceInfo(state, encodingOptions, mediaSource, url);
@@ -199,6 +218,12 @@ public static class StreamingHelpers
         else
         {
             state.OutputAudioBitrate = encodingHelper.GetAudioBitrateParam(streamingRequest.AudioBitRate, streamingRequest.AudioCodec, state.AudioStream, state.OutputAudioChannels) ?? 0;
+        }
+
+        if (singleAudio)
+        {
+            // Stock Jellyfin caps (E-)AC-3 at 640 kbps; these clients get the configured bitrate.
+            state.OutputAudioBitrate = SingleAudioTrack.GetOutputBitrate(state.OutputAudioChannels);
         }
 
         if (outputAudioCodec.StartsWith("pcm_", StringComparison.Ordinal))

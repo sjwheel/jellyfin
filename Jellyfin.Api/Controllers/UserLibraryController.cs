@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -96,7 +97,26 @@ public class UserLibraryController : BaseJellyfinApiController
 
         var dtoOptions = new DtoOptions().AddClientFields(User);
 
-        return _dtoService.GetBaseItemDto(item, dtoOptions, user);
+        var dto = _dtoService.GetBaseItemDto(item, dtoOptions, user);
+        if (item.MediaType == MediaType.Video
+            && SingleAudioTrack.AppliesToClient(User.GetClient(), User.GetDevice()))
+        {
+            // Single audio track mode: the item details list the same single track PlaybackInfo plays.
+            if (dto.MediaSources is { } mediaSources)
+            {
+                foreach (var mediaSource in mediaSources)
+                {
+                    SingleAudioTrack.ApplyTo(mediaSource);
+                }
+            }
+
+            if (dto.MediaStreams is { } streams && SingleAudioTrack.SelectBest(streams) is { } best)
+            {
+                dto.MediaStreams = streams.Where(s => s.Type != MediaStreamType.Audio || s.Index == best.Index).ToArray();
+            }
+        }
+
+        return dto;
     }
 
     /// <summary>
