@@ -179,6 +179,123 @@ public static class SingleAudioTrack
         return best;
     }
 
+    /// <summary>
+    /// Picks the audio tracks to offer: per language, the best track (as <see cref="SelectBest"/> ranks them) plus
+    /// lossless tracks in that language with a different channel count (e.g. an original mono or stereo mix next to
+    /// a 5.1 remix), one per channel count. Commentaries and tracks the hints file marks as skip are left out.
+    /// </summary>
+    /// <param name="streams">All streams of the media source.</param>
+    /// <param name="mediaPath">The media file path (for the hints file).</param>
+    /// <returns>The offered tracks in stream order.</returns>
+    public static IReadOnlyList<MediaStream> SelectOptions(IEnumerable<MediaStream>? streams, string? mediaPath)
+    {
+        var audio = (streams ?? []).Where(s => s.Type == MediaStreamType.Audio).ToList();
+        if (audio.Count == 0)
+        {
+            return [];
+        }
+
+        var hints = AudioTrackHints.Get(mediaPath);
+        var usable = audio.Where(s => !IsCommentary(s) && !(hints?.Skip.Contains(s.Index) ?? false)).ToList();
+        if (usable.Count == 0)
+        {
+            usable = audio;
+        }
+
+        var options = new List<MediaStream>();
+        foreach (var group in usable.GroupBy(s => NormalizeLanguage(s.Language), StringComparer.OrdinalIgnoreCase))
+        {
+            var ranked = Rank(group).ToList();
+            var primary = ranked[0];
+            options.Add(primary);
+            options.AddRange(ranked
+                .Where(s => IsLossless(s) && (s.Channels ?? 0) != (primary.Channels ?? 0))
+                .GroupBy(s => s.Channels ?? 0)
+                .Select(g => g.First()));
+        }
+
+        return options.OrderBy(s => s.Index).ToList();
+    }
+
+    /// <summary>
+    /// Picks the track to play among the offered ones: the requested track when it is offered; else the best track in
+    /// the user's preferred audio language (the per-user "preferred audio language" setting) when there is one; else
+    /// the best track in the film's original language (hints file, else the language of the default track).
+    /// </summary>
+    /// <param name="streams">All streams of the media source.</param>
+    /// <param name="mediaPath">The media file path.</param>
+    /// <param name="preferredLanguage">The user's preferred audio language, or <c>null</c>/empty for "original".</param>
+    /// <param name="requestedIndex">The audio stream index the client asked for, if any.</param>
+    /// <returns>The chosen stream and all offered streams.</returns>
+    public static (MediaStream? Chosen, IReadOnlyList<MediaStream> Options) Resolve(IEnumerable<MediaStream>? streams, string? mediaPath, string? preferredLanguage, int? requestedIndex)
+    {
+        var list = (streams ?? []).ToList();
+        var options = SelectOptions(list, mediaPath);
+        if (options.Count == 0)
+        {
+            return (null, options);
+        }
+
+        if (requestedIndex.HasValue && options.FirstOrDefault(s => s.Index == requestedIndex.Value) is { } requested)
+        {
+            return (requested, options);
+        }
+
+        var audio = list.Where(s => s.Type == MediaStreamType.Audio).ToList();
+        var defaultTrack = audio.FirstOrDefault(s => s.IsDefault) ?? audio[0];
+        var languages = new[]
+        {
+            NormalizeLanguage(preferredLanguage),
+            NormalizeLanguage(AudioTrackHints.Get(mediaPath)?.OriginalLanguage),
+            NormalizeLanguage(defaultTrack.Language)
+        };
+        for (var i = 0; i < languages.Length; i++)
+        {
+            var language = languages[i];
+            if (language.Length == 0 && i < languages.Length - 1)
+            {
+                continue;
+            }
+
+            var inLanguage = options.Where(s => string.Equals(NormalizeLanguage(s.Language), language, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (inLanguage.Count > 0)
+            {
+                return (Rank(inLanguage).First(), options);
+            }
+        }
+
+        return (Rank(options).First(), options);
+    }
+
+    /// <summary>
+    /// Removes the audio streams that are not offered from a media source and makes the chosen one the default.
+    /// </summary>
+    /// <param name="mediaSource">The media source (its stream list is replaced, the stream objects are not modified).</param>
+    /// <param name="preferredLanguage">The user's preferred audio language.</param>
+    /// <param name="requestedIndex">The audio stream index the client asked for, if any.</param>
+    /// <returns>The chosen audio stream, or <c>null</c> when there is no audio.</returns>
+    public static MediaStream? ApplyOptionsTo(MediaSourceInfo mediaSource, string? preferredLanguage, int? requestedIndex)
+    {
+        var (chosen, options) = Resolve(mediaSource.MediaStreams, mediaSource.Path, preferredLanguage, requestedIndex);
+        if (chosen is null)
+        {
+            return null;
+        }
+
+        var offered = options.Select(s => s.Index).ToHashSet();
+        mediaSource.MediaStreams = mediaSource.MediaStreams.Where(s => s.Type != MediaStreamType.Audio || offered.Contains(s.Index)).ToList();
+        mediaSource.DefaultAudioStreamIndex = chosen.Index;
+        return chosen;
+    }
+
+    private static IOrderedEnumerable<MediaStream> Rank(IEnumerable<MediaStream> streams)
+        => streams
+            .OrderByDescending(IsLossless)
+            .ThenByDescending(s => s.Channels ?? 0)
+            .ThenByDescending(CodecRank)
+            .ThenByDescending(s => s.BitRate ?? 0)
+            .ThenBy(s => s.Index);
+
     private static int CodecRank(MediaStream stream)
     {
         var codec = stream.Codec ?? string.Empty;
@@ -215,6 +332,21 @@ public static class SingleAudioTrack
         => (stream.Title?.Contains("commentary", StringComparison.OrdinalIgnoreCase) ?? false)
             || (stream.Comment?.Contains("commentary", StringComparison.OrdinalIgnoreCase) ?? false);
 
+    private static readonly Dictionary<string, string> _bibliographic = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["fre"] = "fra", ["ger"] = "deu", ["chi"] = "zho", ["cze"] = "ces", ["dut"] = "nld", ["gre"] = "ell",
+        ["per"] = "fas", ["rum"] = "ron", ["slo"] = "slk", ["ice"] = "isl", ["arm"] = "hye", ["geo"] = "kat",
+        ["mac"] = "mkd", ["may"] = "msa", ["alb"] = "sqi", ["baq"] = "eus", ["bur"] = "mya", ["wel"] = "cym", ["tib"] = "bod"
+    };
+
     private static string NormalizeLanguage(string? language)
-        => string.IsNullOrWhiteSpace(language) || string.Equals(language, "und", StringComparison.OrdinalIgnoreCase) ? string.Empty : language;
+    {
+        if (string.IsNullOrWhiteSpace(language) || string.Equals(language, "und", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        language = language.Trim().ToLowerInvariant();
+        return _bibliographic.TryGetValue(language, out var terminology) ? terminology : language;
+    }
 }

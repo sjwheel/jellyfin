@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -95,6 +97,87 @@ namespace Jellyfin.Controller.Tests.MediaEncoding
             Assert.True(SingleAudioTrack.AppliesToClient(clients, "Jellyfin Android TV", "Basement Google TV Streamer"));
             Assert.False(SingleAudioTrack.AppliesToClient(clients, "Kodi", "CoreELEC"));
             Assert.False(SingleAudioTrack.AppliesToClient(SingleAudioTrack.ParseClients(null), "Jellyfin Android TV", "Basement Google TV streamer"));
+        }
+
+        [Fact]
+        public void Options_OneBestPerLanguage_PlusDistinctLosslessLayouts()
+        {
+            // The Great Escape: DTS-HD MA mono (default) + core, DTS-HD MA 5.1 + core, two AC-3 stereo; plus a French AC-3.
+            var streams = new List<MediaStream>
+            {
+                V(), A(1, "dts", 1, "eng", profile: "DTS-HD MA", isDefault: true), A(2, "dts", 1, "eng", 768000, "DTS"),
+                A(3, "dts", 6, "eng", profile: "DTS-HD MA"), A(4, "dts", 6, "eng", 1536000, "DTS"), A(5, "ac3", 2, "eng", 192000),
+                A(6, "ac3", 6, "fre", 640000), A(7, "ac3", 2, "fre", 192000)
+            };
+            var options = SingleAudioTrack.SelectOptions(streams, null);
+            Assert.Equal(new[] { 1, 3, 6 }, options.Select(s => s.Index));
+            Assert.Equal(3, SingleAudioTrack.Resolve(streams, null, null, null).Chosen!.Index);
+        }
+
+        [Fact]
+        public void Options_OneTrackPerChannelCount()
+        {
+            // Nightcrawler: TrueHD 7.1, DTS-HD MA 5.1, three DTS-HD MA stereo (one mix, two commentaries untagged).
+            var streams = new List<MediaStream> { V(), A(1, "truehd", 8, "eng", isDefault: true), A(3, "dts", 6, "eng", profile: "DTS-HD MA"), A(5, "dts", 2, "eng", profile: "DTS-HD MA"), A(7, "dts", 2, "eng", profile: "DTS-HD MA") };
+            Assert.Equal(new[] { 1, 3, 5 }, SingleAudioTrack.SelectOptions(streams, null).Select(s => s.Index));
+        }
+
+        [Fact]
+        public void Resolve_PreferredLanguageThenOriginalThenDefault()
+        {
+            // Spirited Away: English DTS-HD MA is the default, Japanese DTS-HD MA exists, French AC-3.
+            var streams = new List<MediaStream> { V(), A(1, "dts", 6, "eng", profile: "DTS-HD MA", isDefault: true), A(3, "ac3", 6, "fre", 640000), A(4, "dts", 6, "jpn", profile: "DTS-HD MA") };
+            var path = WriteHints("/media/movies/x/spirited.mkv", "jpn", string.Empty);
+            Assert.Equal(4, SingleAudioTrack.Resolve(streams, path, null, null).Chosen!.Index);
+            Assert.Equal(4, SingleAudioTrack.Resolve(streams, path, string.Empty, null).Chosen!.Index);
+            Assert.Equal(1, SingleAudioTrack.Resolve(streams, path, "eng", null).Chosen!.Index);
+            Assert.Equal(3, SingleAudioTrack.Resolve(streams, path, null, 3).Chosen!.Index);
+            // Not offered (or nonexistent) requested index -> the default.
+            Assert.Equal(4, SingleAudioTrack.Resolve(streams, path, null, 9).Chosen!.Index);
+            // No hints: the default track's language.
+            Assert.Equal(1, SingleAudioTrack.Resolve(streams, "/other.mkv", null, null).Chosen!.Index);
+            // Preferred language missing from the file -> original.
+            Assert.Equal(4, SingleAudioTrack.Resolve(streams, path, "kor", null).Chosen!.Index);
+        }
+
+        [Fact]
+        public void Options_HintsSkipSameMixAndCommentary()
+        {
+            var streams = new List<MediaStream> { V(), A(1, "truehd", 8, "eng", isDefault: true), A(3, "dts", 6, "eng", profile: "DTS-HD MA"), A(5, "dts", 2, "eng", profile: "DTS-HD MA"), A(7, "dts", 2, "eng", profile: "DTS-HD MA") };
+            var path = WriteHints("/media/movies/x/night.mkv", "eng", "\"3\": \"same-mix\", \"5\": \"commentary\"");
+            Assert.Equal(new[] { 1, 7 }, SingleAudioTrack.SelectOptions(streams, path).Select(s => s.Index));
+        }
+
+        [Fact]
+        public void ApplyOptionsTo_FiltersAndSetsDefault()
+        {
+            var source = new MediaSourceInfo
+            {
+                Path = "/none.mkv",
+                MediaStreams = new List<MediaStream> { V(), A(1, "ac3", 6, "deu", 640000, isDefault: true), A(2, "ac3", 6, "eng", 640000), A(3, "ac3", 2, "eng", 192000) }
+            };
+            var chosen = SingleAudioTrack.ApplyOptionsTo(source, "eng", null);
+            Assert.Equal(2, chosen!.Index);
+            Assert.Equal(2, source.DefaultAudioStreamIndex);
+            Assert.Equal(new[] { 0, 1, 2 }, source.MediaStreams.Select(s => s.Index));
+        }
+
+        [Fact]
+        public void Hints_Parse()
+        {
+            var h = AudioTrackHints.Parse("{\"files\": {\"/a.mkv\": {\"orig\": \"kor\", \"skip\": {\"4\": \"same-mix\"}}, \"/b.mkv\": {}}}");
+            Assert.Equal("kor", h["/a.mkv"].OriginalLanguage);
+            Assert.Contains(4, h["/a.mkv"].Skip);
+            Assert.Null(h["/b.mkv"].OriginalLanguage);
+        }
+
+        private static string WriteHints(string mediaPath, string orig, string skip)
+        {
+            // Tests in one class run sequentially, so the process-wide env var is safe here.
+            var file = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "audio-hints-" + System.Guid.NewGuid().ToString("N") + ".json");
+            System.IO.File.WriteAllText(file, "{\"files\": {\"" + mediaPath + "\": {\"orig\": \"" + orig + "\", \"skip\": {" + skip + "}}}}");
+            System.Environment.SetEnvironmentVariable("JELLYFIN_AUDIO_TRACK_HINTS", file);
+            return mediaPath;
         }
     }
 }

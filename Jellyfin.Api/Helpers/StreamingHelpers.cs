@@ -152,13 +152,13 @@ public static class StreamingHelpers
             }
         }
 
-        // Single audio track mode: whatever the client asked for, play the best track as E-AC-3 (or copy E-AC-3/AC-3).
+        // Single audio track mode: play the requested track if it is offered (else the user's default) as E-AC-3 (or copy E-AC-3/AC-3).
         var singleAudio = false;
         if (!streamingRequest.Static
             && state.IsInputVideo
             && mediaSource is not null
             && SingleAudioTrack.AppliesToClient(httpContext.User.GetClient(), httpContext.User.GetDevice())
-            && SingleAudioTrack.SelectBest(mediaSource.MediaStreams) is { } bestAudio)
+            && SingleAudioTrack.Resolve(mediaSource.MediaStreams, mediaSource.Path, state.User?.AudioLanguagePreference, streamingRequest.AudioStreamIndex).Chosen is { } bestAudio)
         {
             singleAudio = true;
             streamingRequest.AudioStreamIndex = bestAudio.Index;

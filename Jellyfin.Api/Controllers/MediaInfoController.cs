@@ -199,10 +199,11 @@ public class MediaInfoController : BaseJellyfinApiController
                 // EDL muting needs the server to transcode the audio (the video is still copied).
                 var edlMute = edlMuteClient && EdlMute.GetMuteWindows(mediaSource.Path).Count > 0;
 
-                // Single audio track mode: list only the best track and always serve it as E-AC-3 from the server.
+                // Single audio track mode: list only the offered tracks (per language: best + distinct lossless mixes) and
+                // always serve the chosen one as E-AC-3 from the server.
                 var sourceAudioStreamIndex = audioStreamIndex;
                 var singleAudio = false;
-                if (singleAudioClient && SingleAudioTrack.ApplyTo(mediaSource) is { } bestAudio)
+                if (singleAudioClient && SingleAudioTrack.ApplyOptionsTo(mediaSource, user?.AudioLanguagePreference, audioStreamIndex) is { } bestAudio)
                 {
                     sourceAudioStreamIndex = bestAudio.Index;
                     singleAudio = true;

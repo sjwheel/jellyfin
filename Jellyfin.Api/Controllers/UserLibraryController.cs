@@ -101,18 +101,24 @@ public class UserLibraryController : BaseJellyfinApiController
         if (item.MediaType == MediaType.Video
             && SingleAudioTrack.AppliesToClient(User.GetClient(), User.GetDevice()))
         {
-            // Single audio track mode: the item details list the same single track PlaybackInfo plays.
+            // Single audio track mode: the item details list the same tracks PlaybackInfo offers.
+            var preferredLanguage = user?.AudioLanguagePreference;
             if (dto.MediaSources is { } mediaSources)
             {
                 foreach (var mediaSource in mediaSources)
                 {
-                    SingleAudioTrack.ApplyTo(mediaSource);
+                    SingleAudioTrack.ApplyOptionsTo(mediaSource, preferredLanguage, null);
                 }
             }
 
-            if (dto.MediaStreams is { } streams && SingleAudioTrack.SelectBest(streams) is { } best)
+            if (dto.MediaStreams is { } streams)
             {
-                dto.MediaStreams = streams.Where(s => s.Type != MediaStreamType.Audio || s.Index == best.Index).ToArray();
+                var path = dto.MediaSources?.FirstOrDefault()?.Path ?? item.Path;
+                var offered = SingleAudioTrack.Resolve(streams, path, preferredLanguage, null).Options.Select(s => s.Index).ToHashSet();
+                if (offered.Count > 0)
+                {
+                    dto.MediaStreams = streams.Where(s => s.Type != MediaStreamType.Audio || offered.Contains(s.Index)).ToArray();
+                }
             }
         }
 
