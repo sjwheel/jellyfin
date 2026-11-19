@@ -15,6 +15,7 @@ using Jellyfin.Api.Models.StreamingDtos;
 using Jellyfin.Data.Enums;
 using Jellyfin.Extensions;
 using Jellyfin.MediaEncoding.Hls.Playlist;
+using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
@@ -43,6 +44,7 @@ public class DynamicHlsController : BaseJellyfinApiController
     private const EncoderPreset DefaultVodEncoderPreset = EncoderPreset.veryfast;
     private const EncoderPreset DefaultEventEncoderPreset = EncoderPreset.superfast;
     private const TranscodingJobType TranscodingJobType = MediaBrowser.Controller.MediaEncoding.TranscodingJobType.Hls;
+    private const int MaxSegmentFfmpegStartAttempts = 3;
 
     private readonly Version _minFFmpegFlacInMp4 = new Version(6, 0);
     private readonly Version _minFFmpegX265BframeInFmp4 = new Version(7, 0, 1);
@@ -1547,15 +1549,43 @@ public class DynamicHlsController : BaseJellyfinApiController
 
                     streamingRequest.StartTimeTicks = streamingRequest.CurrentRuntimeTicks;
 
-                    var jobCancellationTokenSource = new CancellationTokenSource();
                     state.WaitForPath = segmentPath;
-                    job = await _transcodeManager.StartFfMpeg(
-                        state,
-                        playlistPath,
-                        GetCommandLineArguments(playlistPath, state, false, segmentId == -1 ? 0 : segmentId),
-                        Request.HttpContext.User.GetUserId(),
-                        TranscodingJobType,
-                        jobCancellationTokenSource).ConfigureAwait(false);
+                    var commandLineArguments = GetCommandLineArguments(playlistPath, state, false, segmentId == -1 ? 0 : segmentId);
+                    for (var attempt = 1; ; attempt++)
+                    {
+                        try
+                        {
+                            job = await _transcodeManager.StartFfMpeg(
+                                state,
+                                playlistPath,
+                                commandLineArguments,
+                                Request.HttpContext.User.GetUserId(),
+                                TranscodingJobType,
+                                new CancellationTokenSource()).ConfigureAwait(false);
+                            break;
+                        }
+                        catch (FfmpegException ex) when (attempt < MaxSegmentFfmpegStartAttempts
+                            && !state.MediaSource.RequiresClosing
+                            && !HttpContext.RequestAborted.IsCancellationRequested)
+                        {
+                            // An FFmpeg that dies before writing its first segment would otherwise turn
+                            // into a 500 that hls.js never retries, so playback hangs forever. Seen with
+                            // hevc_qsv crashing ("Invalid FrameType:0", exit 139) right after a seek
+                            // restart; the same command line works when simply run again.
+                            _logger.LogWarning(
+                                "FFmpeg failed to start for segment {SegmentId} ({Message}); retrying, attempt {Attempt} of {MaxAttempts}",
+                                segmentId,
+                                ex.Message,
+                                attempt + 1,
+                                MaxSegmentFfmpegStartAttempts);
+
+                            // Drop the dead job so its kill timer can't later delete the retry's files.
+                            await _transcodeManager.KillTranscodingJobs(streamingRequest.DeviceId, streamingRequest.PlaySessionId, p => false)
+                                .ConfigureAwait(false);
+                            await DeleteSegmentsFrom(playlistPath, segmentExtension, segmentId == -1 ? 0 : segmentId).ConfigureAwait(false);
+                            await Task.Delay(500 * attempt, HttpContext.RequestAborted).ConfigureAwait(false);
+                        }
+                    }
                 }
                 catch
                 {
