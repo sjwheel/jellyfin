@@ -2955,6 +2955,12 @@ namespace MediaBrowser.Controller.MediaEncoding
                 filters.Add(EdlMute.BuildFilter(muteWindows, offset));
             }
 
+            if (state.AvOffsetMs != 0)
+            {
+                // After the mute (whose windows are in source time): move the audio timestamps by the lip-sync delay.
+                filters.Add(AvOffset.BuildFilter(state.AvOffsetMs));
+            }
+
             if (state.SubtitleStream is not null && state.SubtitleStream.IsTextSubtitleStream && ShouldEncodeSubtitle(state) && !isCopyingTimestamps)
             {
                 var seconds = TimeSpan.FromTicks(state.StartTimeTicks ?? 0).TotalSeconds;

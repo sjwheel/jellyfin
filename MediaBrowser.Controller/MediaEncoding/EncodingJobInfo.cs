@@ -77,6 +77,11 @@ namespace MediaBrowser.Controller.MediaEncoding
         /// </summary>
         public IReadOnlyList<EdlMuteWindow> EdlMuteWindows { get; set; }
 
+        /// <summary>
+        /// Gets or sets the lip-sync audio delay in milliseconds applied to the audio transcode (see <see cref="AvOffset"/>).
+        /// </summary>
+        public double AvOffsetMs { get; set; }
+
         public bool IsInputVideo { get; set; }
 
         public string OutputAudioCodec { get; set; }

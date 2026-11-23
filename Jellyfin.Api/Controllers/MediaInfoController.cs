@@ -199,6 +199,10 @@ public class MediaInfoController : BaseJellyfinApiController
                 // EDL muting needs the server to transcode the audio (the video is still copied).
                 var edlMute = edlMuteClient && EdlMute.GetMuteWindows(mediaSource.Path).Count > 0;
 
+                // Lip-sync pre-correction also needs a server-side audio transcode (timestamps shifted, video copied).
+                edlMute |= item.MediaType == MediaType.Video
+                    && AvOffset.GetDelayMs(User.GetClient(), User.GetDevice(), mediaSource.VideoStream) != 0;
+
                 // Single audio track mode: list only the offered tracks (per language: best + distinct lossless mixes) and
                 // always serve the chosen one as E-AC-3 from the server.
                 var sourceAudioStreamIndex = audioStreamIndex;

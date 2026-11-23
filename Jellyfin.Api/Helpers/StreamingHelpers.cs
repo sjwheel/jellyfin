@@ -215,6 +215,17 @@ public static class StreamingHelpers
             }
         }
 
+        // Lip-sync pre-correction: shift the audio by the configured delay for this video format (video still copied).
+        if (!streamingRequest.Static && state.IsInputVideo)
+        {
+            var avOffsetMs = AvOffset.GetDelayMs(httpContext.User.GetClient(), httpContext.User.GetDevice(), state.VideoStream);
+            if (avOffsetMs != 0)
+            {
+                state.AvOffsetMs = avOffsetMs;
+                streamingRequest.AllowAudioStreamCopy = false;
+            }
+        }
+
         var outputAudioCodec = streamingRequest.AudioCodec;
         state.OutputAudioCodec = outputAudioCodec;
         state.OutputContainer = (containerInternal ?? string.Empty).TrimStart('.');
