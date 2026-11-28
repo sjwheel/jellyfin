@@ -1487,7 +1487,10 @@ public class DynamicHlsController : BaseJellyfinApiController
             return await GetSegmentResult(state, playlistPath, segmentPath, segmentExtension, segmentId, job, HttpContext.RequestAborted).ConfigureAwait(false);
         }
 
-        using (await _transcodeManager.LockAsync(playlistPath, HttpContext.RequestAborted).ConfigureAwait(false))
+        var lockKey = string.IsNullOrWhiteSpace(streamingRequest.PlaySessionId)
+            ? playlistPath
+            : streamingRequest.PlaySessionId;
+        using (await _transcodeManager.LockAsync(lockKey, HttpContext.RequestAborted).ConfigureAwait(false))
         {
             var startTranscoding = false;
             if (IsCompleteSegment(segmentPath, segmentExtension, out _))
@@ -1534,8 +1537,18 @@ public class DynamicHlsController : BaseJellyfinApiController
                 // If the playlist doesn't already exist, startup ffmpeg
                 try
                 {
+                    var previousPlaylistPath = !string.IsNullOrWhiteSpace(streamingRequest.PlaySessionId)
+                        ? _transcodeManager.GetTranscodingJob(streamingRequest.PlaySessionId)?.Path
+                        : null;
+
                     await _transcodeManager.KillTranscodingJobs(streamingRequest.DeviceId, streamingRequest.PlaySessionId, p => false)
                         .ConfigureAwait(false);
+
+                    if (!string.IsNullOrEmpty(previousPlaylistPath)
+                        && !string.Equals(previousPlaylistPath, playlistPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        await DeletePlaylistFiles(previousPlaylistPath).ConfigureAwait(false);
+                    }
 
                     if (currentTranscodingIndex.HasValue)
                     {
@@ -2393,6 +2406,21 @@ public class DynamicHlsController : BaseJellyfinApiController
             {
                 await DeleteFile(file, 0).ConfigureAwait(false);
             }
+        }
+    }
+
+    private async Task DeletePlaylistFiles(string playlistPath)
+    {
+        var folder = Path.GetDirectoryName(playlistPath);
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+        {
+            return;
+        }
+
+        var prefix = Path.GetFileNameWithoutExtension(playlistPath);
+        foreach (var file in Directory.EnumerateFiles(folder, prefix + "*"))
+        {
+            await DeleteFile(file, 0).ConfigureAwait(false);
         }
     }
 

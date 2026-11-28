@@ -426,9 +426,20 @@ public static class StreamingHelpers
     /// <param name="deviceId">The device id.</param>
     /// <param name="playSessionId">The play session id.</param>
     /// <returns>The complete file path, including the folder, for the transcoding file.</returns>
-    private static string GetOutputFilePath(StreamState state, string outputFileExtension, IServerConfigurationManager serverConfigurationManager, string? deviceId, string? playSessionId)
+    internal static string GetOutputFilePath(StreamState state, string outputFileExtension, IServerConfigurationManager serverConfigurationManager, string? deviceId, string? playSessionId)
     {
-        var data = $"{state.MediaPath}-{state.UserAgent}-{deviceId!}-{playSessionId!}";
+        string? videoProfile = null;
+        if (state.VideoRequest is not null && !string.IsNullOrEmpty(state.ActualOutputVideoCodec))
+        {
+            state.VideoRequest.StreamOptions.TryGetValue(state.ActualOutputVideoCodec + "-profile", out videoProfile);
+        }
+
+        // Include the resolved, segment-invariant variant parameters so distinct master.m3u8
+        // variants sharing a PlaySessionId (e.g. HEVC HDR10 copy vs H.264/HEVC SDR fallback or
+        // ABR tiers) never collide on the same playlist, fMP4 -1.mp4 init segment, or media segments.
+        var data = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{state.MediaPath}-{state.UserAgent}-{deviceId}-{playSessionId}-{state.OutputVideoCodec}-{videoProfile}-{state.OutputVideoBitrate}-{state.VideoRequest?.MaxWidth}x{state.VideoRequest?.MaxHeight}-{state.OutputAudioCodec}-{state.Request.AudioStreamIndex}-{state.Request.SubtitleStreamIndex}-{state.SegmentLength}");
 
         var filename = data.GetMD5().ToString("N", CultureInfo.InvariantCulture);
         var ext = outputFileExtension.ToLowerInvariant();
